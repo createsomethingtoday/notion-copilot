@@ -22,6 +22,8 @@ export interface QueueMetrics {
   throughput: number;    // Tasks/minute
   errorRate: number;     // Errors/minute
   priorityDistribution: Record<TaskPriority, number>;
+  deadLetterQueueSize: number;
+  deadLetterQueueAlertCount: number;
 }
 
 export class MetricsCollector {
@@ -66,6 +68,8 @@ export class MetricsCollector {
     activeCount: number,
     completedCount: number,
     failedCount: number,
+    deadLetterCount: number,
+    deadLetterAlertCount: number,
     tasks: Task[]
   ): void {
     const now = Date.now();
@@ -106,11 +110,22 @@ export class MetricsCollector {
       avgExecutionTime,
       throughput: (recentCompleted / MetricsCollector.WINDOW_SIZE) * 60000,
       errorRate: (recentErrors / MetricsCollector.WINDOW_SIZE) * 60000,
-      priorityDistribution
+      priorityDistribution,
+      deadLetterQueueSize: deadLetterCount,
+      deadLetterQueueAlertCount: deadLetterAlertCount
     };
 
     this.queueMetrics.push(metrics);
     this.cleanup();
+
+    // Add alerts for dead letter queue
+    if (deadLetterAlertCount > 0) {
+      this.alerts.push({
+        type: 'dead_letter_queue',
+        message: `Dead letter queue has ${deadLetterCount} tasks (${deadLetterAlertCount} alerts)`,
+        severity: deadLetterAlertCount > 10 ? 'error' : 'warning'
+      });
+    }
   }
 
   /**

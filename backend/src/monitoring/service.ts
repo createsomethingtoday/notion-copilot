@@ -1,541 +1,322 @@
-import type {
-  Metric,
-  ErrorMetric,
-  PerformanceMetric,
-  ResourceMetric,
-  TaskMetric,
-  APIMetric,
-  UserMetric,
-  Alert,
-  AlertConfig,
-  MonitoringConfig
-} from './types';
-import { MetricType, MetricCategory } from './types';
-import type { NotionAssistantError } from '../errors/types';
-import { ErrorCategory } from '../errors/types';
+import type { MetricProvider, MetricValue } from './types';
 import { DatadogProvider } from './providers/datadog';
-import { SystemMetricsCollector } from './system';
-import { getSystemAlertConfigs } from './alerts';
-import type { Logger } from '../utils/logger';
-import type { PostgresAdapter } from '../db/postgres';
-import { Logger as LoggerImpl } from '../utils/logger';
-import { MetricsAdapter } from './adapter';
+import { getLogger } from '../logger';
+import { NotionAssistantError, ErrorCode, ErrorSeverity } from '../errors/types';
+import { CircuitBreaker } from '../utils/circuit-breaker';
+import type { Logger } from '@/logger';
 
-interface ProviderInstance {
-  sendMetrics(metrics: Metric[]): Promise<void>;
+const logger = getLogger('MonitoringService');
+
+interface MonitoringOptions {
+  provider: 'datadog' | 'console';
+  apiKey: string;
+  flushIntervalMs?: number;
+  batchSize?: number;
+  deduplicate?: boolean;
+  systemMetrics?: {
+    memoryUsage?: boolean;
+    cpuUsage?: boolean;
+    eventLoopLag?: boolean;
+    activeHandles?: boolean;
+  };
 }
 
-/**
- * Base monitoring service that handles metric collection and alerting
- */
 export class MonitoringService {
-  private metrics: Metric[] = [];
-  private alerts: Alert[] = [];
-  private flushInterval?: NodeJS.Timeout;
-  private alertCheckInterval?: NodeJS.Timeout;
-  private provider?: ProviderInstance;
-  private systemMetrics?: SystemMetricsCollector;
+  private readonly metrics = new Map<string, MetricValue[]>();
+  private readonly provider: MetricProvider;
+  private readonly flushInterval: NodeJS.Timeout;
+  private readonly circuitBreaker: CircuitBreaker;
+  private readonly options: Required<MonitoringOptions>;
   private readonly logger: Logger;
-  private readonly cache: Map<string, Array<{ value: number; timestamp: Date; labels?: Record<string, string> }>> = new Map();
-  private readonly adapter: MetricsAdapter;
 
-  constructor(
-    private readonly config: MonitoringConfig,
-    private readonly db?: PostgresAdapter
-  ) {
-    this.logger = new LoggerImpl('MonitoringService');
-    this.adapter = new MetricsAdapter(this);
-    this.setupProvider();
-    this.setupIntervals();
-    this.setupSystemMetrics();
-    this.setupAlerts();
+  constructor(options: MonitoringOptions) {
+    this.options = {
+      ...options,
+      flushIntervalMs: options.flushIntervalMs ?? 10000,
+      batchSize: options.batchSize ?? 100,
+      deduplicate: options.deduplicate ?? true,
+      systemMetrics: {
+        memoryUsage: options.systemMetrics?.memoryUsage ?? true,
+        cpuUsage: options.systemMetrics?.cpuUsage ?? true,
+        eventLoopLag: options.systemMetrics?.eventLoopLag ?? true,
+        activeHandles: options.systemMetrics?.activeHandles ?? true
+      }
+    };
+
+    this.provider = this.createProvider(this.options);
+    this.circuitBreaker = new CircuitBreaker('monitoring', {
+      maxFailures: 3,
+      resetTimeoutMs: 60000,
+      halfOpenMaxAttempts: 2,
+      monitorIntervalMs: 30000
+    }, logger);
+
+    this.flushInterval = setInterval(() => {
+      this.flush().catch(error => {
+        logger.error({
+          message: 'Failed to flush metrics',
+          context: { error }
+        });
+      });
+    }, this.options.flushIntervalMs);
+
+    this.logger = getLogger('MonitoringService');
+
+    if (this.options.systemMetrics.memoryUsage) {
+      this.startMemoryMetrics();
+    }
+    if (this.options.systemMetrics.cpuUsage) {
+      this.startCpuMetrics();
+    }
+    if (this.options.systemMetrics.eventLoopLag) {
+      this.startEventLoopMetrics();
+    }
+    if (this.options.systemMetrics.activeHandles) {
+      this.startHandleMetrics();
+    }
   }
 
-  /**
-   * Register a new metric
-   */
-  registerMetric(definition: { name: string; help: string; type: string }): void {
-    this.cache.set(definition.name, []);
+  private createProvider(options: MonitoringOptions): MetricProvider {
+    if (options.provider === 'datadog') {
+      if (!options.apiKey) {
+        throw new NotionAssistantError(
+          'Datadog API key is required',
+          ErrorCode.INVALID_INPUT,
+          ErrorSeverity.ERROR,
+          false
+        );
+      }
+      return new DatadogProvider(options.apiKey);
+    }
+    return {
+      sendMetrics: async (metrics: MetricValue[]) => {
+        logger.debug({
+          message: 'Console metrics provider',
+          context: { metrics }
+        });
+      }
+    };
   }
 
-  /**
-   * Record a metric value
-   */
-  async recordMetric(
-    name: string,
-    value: number,
-    labels: Record<string, string> = {}
-  ): Promise<void> {
-    // Add to cache
-    const cached = this.cache.get(name) ?? [];
-    cached.push({ value, timestamp: new Date(), labels });
-    this.cache.set(name, cached);
+  private startMemoryMetrics(): void {
+    setInterval(() => {
+      const usage = process.memoryUsage();
+      this.gauge('system_memory_usage', usage.heapUsed / 1024 / 1024, {
+        type: 'heap'
+      });
+      this.gauge('system_memory_usage', usage.heapTotal / 1024 / 1024, {
+        type: 'heap_total'
+      });
+      this.gauge('system_memory_usage', usage.rss / 1024 / 1024, {
+        type: 'rss'
+      });
+    }, 1000);
+  }
 
-    // Create metric
-    const metric: Metric = {
-      name,
-      type: MetricType.GAUGE, // Default to gauge
-      category: MetricCategory.PERFORMANCE, // Default category
+  private startCpuMetrics(): void {
+    let lastCpuUsage = process.cpuUsage();
+    let lastHrTime = process.hrtime();
+
+    setInterval(() => {
+      const currentCpuUsage = process.cpuUsage();
+      const currentHrTime = process.hrtime();
+
+      const elapsedUser = currentCpuUsage.user - lastCpuUsage.user;
+      const elapsedSystem = currentCpuUsage.system - lastCpuUsage.system;
+      const elapsedHrTime = process.hrtime(lastHrTime);
+      const elapsedNanos = elapsedHrTime[0] * 1e9 + elapsedHrTime[1];
+
+      const userPercent = (elapsedUser / elapsedNanos) * 100;
+      const systemPercent = (elapsedSystem / elapsedNanos) * 100;
+
+      this.gauge('system_cpu_usage', userPercent, { type: 'user' });
+      this.gauge('system_cpu_usage', systemPercent, { type: 'system' });
+
+      lastCpuUsage = currentCpuUsage;
+      lastHrTime = currentHrTime;
+    }, 1000);
+  }
+
+  private startEventLoopMetrics(): void {
+    let lastCheck = process.hrtime();
+
+    setInterval(() => {
+      const elapsed = process.hrtime(lastCheck);
+      const lag = (elapsed[0] * 1e9 + elapsed[1]) / 1e6 - 500;
+      this.gauge('system_event_loop_lag', lag);
+      lastCheck = process.hrtime();
+    }, 500);
+  }
+
+  private startHandleMetrics(): void {
+    setInterval(() => {
+      let handles = 0;
+      try {
+        handles = process._getActiveHandles()?.length ?? 0;
+      } catch {
+        // Ignore errors accessing internal API
+      }
+      this.gauge('system_active_handles', handles);
+    }, 1000);
+  }
+
+  public increment(metric: string, tags?: Record<string, string>): void {
+    this.record({
+      name: metric,
+      value: 1,
+      timestamp: Date.now(),
+      tags
+    });
+  }
+
+  public gauge(metric: string, value: number, tags?: Record<string, string>): void {
+    this.record({
+      name: metric,
       value,
-      timestamp: new Date(),
-      labels
-    };
-
-    this.addMetric(metric);
+      timestamp: Date.now(),
+      tags
+    });
   }
 
-  /**
-   * Track an error metric
-   */
-  trackError(error: NotionAssistantError): void {
-    const metric: ErrorMetric = {
-      name: 'error_occurrence',
-      type: MetricType.COUNTER,
-      category: MetricCategory.ERROR,
-      value: 1,
-      timestamp: new Date(),
-      error,
-      severity: error.severity,
-      errorCategory: error.code.split('_')[0].toUpperCase() as ErrorCategory,
-      labels: {
-        code: error.code,
-        recoverable: String(error.recoverable)
-      }
-    };
-
-    this.addMetric(metric);
+  public histogram(metric: string, value: number, tags?: Record<string, string>): void {
+    this.record({
+      name: metric,
+      value,
+      timestamp: Date.now(),
+      tags
+    });
   }
 
-  /**
-   * Track a performance metric
-   */
-  trackPerformance(
-    operation: string,
-    duration: number,
-    success: boolean,
-    labels?: Record<string, string>
-  ): void {
-    const metric: PerformanceMetric = {
-      name: 'operation_duration',
-      type: MetricType.HISTOGRAM,
-      category: MetricCategory.PERFORMANCE,
-      value: duration,
-      timestamp: new Date(),
-      operation,
-      duration,
-      success,
-      labels: {
-        operation,
-        success: String(success),
-        ...labels
-      }
-    };
-
-    this.addMetric(metric);
-  }
-
-  /**
-   * Track a resource metric
-   */
-  trackResource(
-    resource: string,
-    usage: number,
-    limit?: number,
-    labels?: Record<string, string>
-  ): void {
-    const metric: ResourceMetric = {
-      name: 'resource_usage',
-      type: MetricType.GAUGE,
-      category: MetricCategory.RESOURCE,
-      value: usage,
-      timestamp: new Date(),
-      resource,
-      usage,
-      limit,
-      labels: {
-        resource,
-        ...labels
-      }
-    };
-
-    this.addMetric(metric);
-  }
-
-  /**
-   * Track a task metric
-   */
-  trackTask(
-    taskType: string,
-    duration: number,
-    success: boolean,
-    retries?: number,
-    labels?: Record<string, string>
-  ): void {
-    const metric: TaskMetric = {
-      name: 'task_execution',
-      type: MetricType.HISTOGRAM,
-      category: MetricCategory.TASK,
-      value: duration,
-      timestamp: new Date(),
-      taskType,
-      duration,
-      success,
-      retries,
-      labels: {
-        taskType,
-        success: String(success),
-        ...labels
-      }
-    };
-
-    this.addMetric(metric);
-  }
-
-  /**
-   * Track an API metric
-   */
-  trackAPI(
-    endpoint: string,
-    method: string,
-    statusCode: number,
-    duration: number,
-    labels?: Record<string, string>
-  ): void {
-    const metric: APIMetric = {
-      name: 'api_request',
-      type: MetricType.HISTOGRAM,
-      category: MetricCategory.API,
-      value: duration,
-      timestamp: new Date(),
-      endpoint,
-      method,
-      statusCode,
-      duration,
-      labels: {
-        endpoint,
-        method,
-        statusCode: String(statusCode),
-        ...labels
-      }
-    };
-
-    this.addMetric(metric);
-  }
-
-  /**
-   * Track a user metric
-   */
-  trackUser(
-    userId: string,
-    action: string,
-    success: boolean,
-    labels?: Record<string, string>
-  ): void {
-    const metric: UserMetric = {
-      name: 'user_action',
-      type: MetricType.COUNTER,
-      category: MetricCategory.USER,
-      value: 1,
-      timestamp: new Date(),
-      userId,
-      action,
-      success,
-      labels: {
-        userId,
-        action,
-        success: String(success),
-        ...labels
-      }
-    };
-
-    this.addMetric(metric);
-  }
-
-  /**
-   * Add an alert configuration
-   */
-  addAlertConfig(config: AlertConfig): void {
-    this.config.alertConfigs = [
-      ...(this.config.alertConfigs || []),
-      config
-    ];
-  }
-
-  /**
-   * Remove an alert configuration
-   */
-  removeAlertConfig(name: string): void {
-    if (!this.config.alertConfigs) return;
-    this.config.alertConfigs = this.config.alertConfigs.filter(
-      config => config.name !== name
-    );
-  }
-
-  /**
-   * Get current alerts
-   */
-  getAlerts(): Alert[] {
-    return this.alerts;
-  }
-
-  /**
-   * Clean up resources
-   */
-  async destroy(): Promise<void> {
-    if (this.flushInterval) {
-      clearInterval(this.flushInterval);
+  private record(metric: MetricValue): void {
+    if (!this.metrics.has(metric.name)) {
+      this.metrics.set(metric.name, []);
     }
-    if (this.alertCheckInterval) {
-      clearInterval(this.alertCheckInterval);
-    }
-    if (this.systemMetrics) {
-      this.systemMetrics.stop();
-    }
-    await this.flush();
-  }
+    this.metrics.get(metric.name)?.push(metric);
 
-  /**
-   * Add a metric to the buffer
-   */
-  private addMetric(metric: Metric): void {
-    // Add global tags
-    if (this.config.tags) {
-      metric.labels = {
-        ...this.config.tags,
-        ...metric.labels
-      };
-    }
-
-    this.metrics.push(metric);
-
-    // Check if we need to flush
-    if (this.metrics.length >= (this.config.batchSize ?? 100)) {
-      void this.flush();
+    if (this.metrics.get(metric.name)?.length === this.options.batchSize) {
+      this.flush().catch(error => {
+        logger.error({
+          message: 'Failed to flush metrics on batch size limit',
+          context: { error }
+        });
+      });
     }
   }
 
-  /**
-   * Flush metrics to the monitoring provider
-   */
-  private async flush(): Promise<void> {
-    if (this.metrics.length === 0) return;
+  public async flush(): Promise<void> {
+    if (this.metrics.size === 0) return;
 
-    const metrics = [...this.metrics];
-    this.metrics = [];
+    const allMetrics: MetricValue[] = [];
+    for (const metrics of this.metrics.values()) {
+      if (this.options.deduplicate) {
+        // Only keep the latest value for each unique combination of name and tags
+        const latest = new Map<string, MetricValue>();
+        for (const metric of metrics) {
+          const key = `${metric.name}:${JSON.stringify(metric.tags)}`;
+          latest.set(key, metric);
+        }
+        allMetrics.push(...Array.from(latest.values()));
+      } else {
+        allMetrics.push(...metrics);
+      }
+    }
 
     try {
-      await this.sendMetrics(metrics);
+      await this.circuitBreaker.execute(async () => {
+        await this.provider.sendMetrics(allMetrics);
+      });
+      this.metrics.clear();
     } catch (error) {
-      // If flush fails, add back to buffer
-      this.metrics = [...metrics, ...this.metrics];
-      console.error('Failed to flush metrics:', error);
-    }
-  }
-
-  /**
-   * Set up the monitoring provider
-   */
-  private setupProvider(): void {
-    switch (this.config.provider) {
-      case 'datadog':
-        if (!this.config.apiKey) {
-          throw new Error('Datadog API key is required');
-        }
-        this.provider = new DatadogProvider({
-          apiKey: this.config.apiKey,
-          appKey: this.config.apiKey,
-          tags: this.config.tags
-        });
-        break;
-      // Add other providers here
-    }
-  }
-
-  /**
-   * Send metrics to the monitoring provider
-   */
-  private async sendMetrics(metrics: Metric[]): Promise<void> {
-    if (!this.provider) {
-      console.warn('No monitoring provider configured');
-      return;
-    }
-
-    await this.provider.sendMetrics(metrics);
-  }
-
-  /**
-   * Check for alerts based on current metrics
-   */
-  private async checkAlerts(): Promise<void> {
-    if (!this.config.alertConfigs) return;
-
-    const now = new Date();
-    const alertableMetrics = this.metrics.reduce((acc, metric) => {
-      if (!acc[metric.name]) {
-        acc[metric.name] = [];
+      if (error instanceof NotionAssistantError) {
+        throw error;
       }
-      acc[metric.name].push(metric);
-      return acc;
-    }, {} as Record<string, Metric[]>);
-
-    // Check each alert configuration
-    for (const config of this.config.alertConfigs) {
-      const metrics = alertableMetrics[config.condition.metric] || [];
-      if (metrics.length === 0) continue;
-
-      // Calculate the metric value based on the metrics
-      const value = this.calculateMetricValue(metrics);
-
-      // Check if the condition is met
-      const triggered = this.evaluateCondition(config.condition, value);
-
-      if (triggered) {
-        // Add new alert if one doesn't exist for this config
-        const existingAlert = this.alerts.find(
-          alert => alert.config.name === config.name && !alert.resolved
-        );
-
-        if (!existingAlert) {
-          this.alerts.push({
-            config,
-            triggered: now,
-            value
-          });
-
-          // TODO: Send notifications based on channels
-        }
-      } else {
-        // Resolve any existing alerts for this config
-        this.alerts = this.alerts.map(alert => {
-          if (alert.config.name === config.name && !alert.resolved) {
-            return { ...alert, resolved: now };
-          }
-          return alert;
-        });
-      }
+      throw new NotionAssistantError(
+        'Failed to flush metrics',
+        ErrorCode.SERVICE_UNAVAILABLE,
+        ErrorSeverity.ERROR,
+        true,
+        { error }
+      );
     }
   }
 
-  /**
-   * Calculate a single value from multiple metrics
-   */
-  private calculateMetricValue(metrics: Metric[]): number {
-    // This is a simple implementation - could be more sophisticated
-    return metrics.reduce((sum, metric) => sum + metric.value, 0) / metrics.length;
-  }
-
-  /**
-   * Evaluate an alert condition
-   */
-  private evaluateCondition(
-    condition: AlertConfig['condition'],
-    value: number
-  ): boolean {
-    switch (condition.operator) {
-      case '>':
-        return value > condition.threshold;
-      case '<':
-        return value < condition.threshold;
-      case '>=':
-        return value >= condition.threshold;
-      case '<=':
-        return value <= condition.threshold;
-      case '==':
-        return value === condition.threshold;
-      case '!=':
-        return value !== condition.threshold;
-      default:
-        return false;
+  public destroy(): void {
+    clearInterval(this.flushInterval);
+    this.circuitBreaker.destroy();
+    if (this.provider.destroy) {
+      this.provider.destroy();
     }
   }
 
-  /**
-   * Set up flush and alert check intervals
-   */
-  private setupIntervals(): void {
-    // Flush metrics periodically
-    this.flushInterval = setInterval(() => {
-      void this.flush();
-    }, this.config.flushIntervalMs ?? 10000);
+  private collectSystemMetrics(): void {
+    // CPU Usage
+    const cpuUsage = process.cpuUsage();
+    this.gauge('system_cpu_usage', cpuUsage.user + cpuUsage.system);
 
-    // Check alerts periodically
-    this.alertCheckInterval = setInterval(() => {
-      void this.checkAlerts();
-    }, 1000); // Check alerts every second
-  }
+    // Memory Usage
+    const memoryUsage = process.memoryUsage();
+    this.gauge('system_memory_usage', memoryUsage.heapUsed);
+    this.gauge('system_memory_total', memoryUsage.heapTotal);
 
-  /**
-   * Set up system metrics collection
-   */
-  private setupSystemMetrics(): void {
-    this.systemMetrics = new SystemMetricsCollector(this.adapter, {
-      collectIntervalMs: this.config.systemMetricsInterval ?? 10000,
-      enableGCMetrics: this.config.enableGCMetrics ?? true
+    // Event Loop Lag
+    const startTime = process.hrtime();
+    setImmediate(() => {
+      const [seconds, nanoseconds] = process.hrtime(startTime);
+      const lag = (seconds * 1e9 + nanoseconds) / 1e6; // Convert to milliseconds
+      this.gauge('system_event_loop_lag', lag);
     });
-    this.systemMetrics.start();
+
+    // Active Handles (connections, timers, etc)
+    const activeHandles = process._getActiveHandles?.() ?? [];
+    this.gauge('system_active_handles', activeHandles.length);
+
+    // Active Requests
+    const activeRequests = process._getActiveRequests?.() ?? [];
+    this.gauge('system_active_requests', activeRequests.length);
   }
 
   /**
-   * Set up default alert configurations
+   * Records a metric value
    */
-  private setupAlerts(): void {
-    // Add system alert configs
-    const systemAlerts = getSystemAlertConfigs();
-    for (const alert of systemAlerts) {
-      this.addAlertConfig(alert);
-    }
-  }
-
-  /**
-   * Get metric values for a time range
-   */
-  async getMetricValues(
-    name: string,
-    startTime: Date,
-    endTime: Date
-  ): Promise<Array<{ value: number; timestamp: Date; labels?: Record<string, string> }>> {
-    const cached = this.cache.get(name) ?? [];
-    return cached.filter(m => 
-      m.timestamp >= startTime && m.timestamp <= endTime
-    );
-  }
-
-  /**
-   * Start periodic metric flushing
-   */
-  startPeriodicFlush(): void {
-    // Already handled by setupIntervals
-  }
-
-  /**
-   * Flush all metrics
-   */
-  async flushAllMetrics(): Promise<void> {
-    await this.flush();
-  }
-
-  /**
-   * Flush a specific metric
-   */
-  async flushMetric(name: string): Promise<void> {
-    const cached = this.cache.get(name);
-    if (!cached || cached.length === 0) return;
-
-    // Save to database if available
-    if (this.db) {
-      for (const metric of cached) {
-        await this.db.saveMetric(name, metric.value, metric.labels ?? {});
+  public recordMetric(name: string, value: number, tags?: Record<string, string>): void {
+    try {
+      if (!this.provider) {
+        this.logger.warn('No metric provider configured');
+        return;
       }
-    }
 
-    // Clear cache
-    this.cache.set(name, []);
+      this.provider.sendMetrics([{
+        name,
+        value,
+        timestamp: Date.now(),
+        tags
+      }]);
+    } catch (error) {
+      this.logger.error('Failed to record metric', error as Error, {
+        name,
+        value
+      });
+    }
   }
 
   /**
-   * Shutdown the service
+   * Increments a counter metric by 1
    */
-  async shutdown(): Promise<void> {
-    await this.destroy();
+  public incrementCounter(name: string, tags?: Record<string, string>): void {
+    this.recordMetric(name, 1, tags);
+  }
+
+  /**
+   * Records a gauge metric
+   */
+  public recordGauge(name: string, value: number, tags?: Record<string, string>): void {
+    this.recordMetric(name, value, tags);
+  }
+
+  /**
+   * Records a histogram metric
+   */
+  public recordHistogram(name: string, value: number, tags?: Record<string, string>): void {
+    this.recordMetric(name, value, tags);
   }
 } 

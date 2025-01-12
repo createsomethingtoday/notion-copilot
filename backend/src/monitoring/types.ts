@@ -154,4 +154,34 @@ export interface MonitoringConfig {
   // System metrics configuration
   systemMetricsInterval?: number;
   enableGCMetrics?: boolean;
+}
+
+/**
+ * Represents a single metric data point
+ */
+export interface MetricValue {
+  name: string;
+  value: number;
+  timestamp: number;
+  tags?: Record<string, string>;
+}
+
+/**
+ * Interface for metric providers (e.g. Datadog, Prometheus)
+ */
+export interface MetricProvider {
+  sendMetrics(metrics: MetricValue[]): Promise<void>;
+  destroy?(): void;
+}
+
+export interface MetricDefinition {
+  name: string;
+  help: string;
+  type: MetricType;
+  labels?: string[];
+}
+
+export interface MetricOptions {
+  labels?: Record<string, string>;
+  timestamp?: number;
 } 
