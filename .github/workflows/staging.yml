@@ -1,0 +1,114 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [ main ]
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    environment:
+      name: staging
+      url: https://staging-api.notion-copilot.com
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd backend
+        npm ci
+
+    - name: Build
+      run: |
+        cd backend
+        npm run build
+
+    - name: Build and push Docker image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: notion-copilot-backend
+        IMAGE_TAG: staging-${{ github.sha }}
+      run: |
+        cd backend
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+    - name: Deploy Auto Scaling
+      run: |
+        aws cloudformation deploy \
+          --template-file infrastructure/autoscaling.yml \
+          --stack-name notion-copilot-staging-autoscaling \
+          --parameter-overrides \
+            EcsClusterName=staging-cluster \
+            EcsServiceName=notion-copilot-backend \
+            MinCapacity=2 \
+            MaxCapacity=10 \
+          --capabilities CAPABILITY_IAM \
+          --no-fail-on-empty-changeset
+
+    - name: Update ECS service
+      run: |
+        aws ecs update-service \
+          --cluster staging-cluster \
+          --service notion-copilot-backend \
+          --force-new-deployment
+
+    - name: Wait for ECS deployment
+      run: |
+        aws ecs wait services-stable \
+          --cluster staging-cluster \
+          --services notion-copilot-backend
+
+    - name: Run database migrations
+      env:
+        MONGODB_URI: ${{ secrets.STAGING_MONGODB_URI }}
+        NODE_ENV: staging
+      run: |
+        cd backend
+        npm run db:migrate
+
+    - name: Run smoke tests
+      env:
+        BASE_URL: https://staging-api.notion-copilot.com
+      run: |
+        cd backend
+        npm run test:e2e
+
+    - name: Run load tests
+      env:
+        BASE_URL: https://staging-api.notion-copilot.com
+      run: |
+        cd backend
+        npm run test:load:ci
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: staging-test-results
+        path: |
+          backend/load-test-results.json
+          backend/coverage 
