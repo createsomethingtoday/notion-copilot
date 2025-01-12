@@ -5,39 +5,40 @@ export interface LogContext {
 }
 
 export class Logger {
-  private readonly context: string;
+  private readonly namespace: string;
 
-  constructor(context: string) {
-    this.context = context;
+  constructor(namespace: string) {
+    this.namespace = namespace;
   }
 
-  private log(level: LogLevel, message: string, error?: Error, context?: LogContext): void {
+  debug(message: string, context: LogContext = {}): void {
+    this.log('debug', message, context);
+  }
+
+  info(message: string, context: LogContext = {}): void {
+    this.log('info', message, context);
+  }
+
+  warn(message: string, context: LogContext = {}): void {
+    this.log('warn', message, context);
+  }
+
+  error(message: string, error?: Error, context: LogContext = {}): void {
+    this.log('error', message, {
+      ...context,
+      error: error?.message,
+      stack: error?.stack
+    });
+  }
+
+  private log(level: LogLevel, message: string, context: LogContext): void {
     const timestamp = new Date().toISOString();
-    const logEntry = {
+    console.log(JSON.stringify({
       timestamp,
       level,
-      context: this.context,
+      namespace: this.namespace,
       message,
-      ...(error && { error: { message: error.message, stack: error.stack } }),
-      ...(context && { data: context })
-    };
-    
-    console.log(JSON.stringify(logEntry));
-  }
-
-  debug(message: string, context?: LogContext): void {
-    this.log('debug', message, undefined, context);
-  }
-
-  info(message: string, context?: LogContext): void {
-    this.log('info', message, undefined, context);
-  }
-
-  warn(message: string, error?: Error, context?: LogContext): void {
-    this.log('warn', message, error, context);
-  }
-
-  error(message: string, error?: Error, context?: LogContext): void {
-    this.log('error', message, error, context);
+      ...context
+    }));
   }
 } 

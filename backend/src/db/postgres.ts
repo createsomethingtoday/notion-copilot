@@ -327,4 +327,105 @@ export class PostgresAdapter {
       };
     }
   }
+
+  /**
+   * Get next task from queue
+   */
+  async getNextTask(): Promise<Task | null> {
+    await this.beginTransaction();
+    try {
+      // Get and lock next pending task
+      const result = await this.query<DBTask>(
+        `SELECT * FROM tasks
+         WHERE status = 'pending'
+         ORDER BY
+           CASE priority
+             WHEN '3' THEN 1  -- URGENT
+             WHEN '2' THEN 2  -- HIGH
+             WHEN '1' THEN 3  -- NORMAL
+             WHEN '0' THEN 4  -- LOW
+           END,
+           created_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1`
+      );
+
+      if (result.rows.length === 0) {
+        await this.commitTransaction();
+        return null;
+      }
+
+      const task = this.mapDBTaskToTask(result.rows[0]);
+      await this.commitTransaction();
+      return task;
+    } catch (error) {
+      await this.rollbackTransaction();
+      throw error;
+    }
+  }
+
+  /**
+   * Get queue size
+   */
+  async getQueueSize(): Promise<number> {
+    const result = await this.query<{ count: string }>(
+      'SELECT COUNT(*) as count FROM tasks WHERE status = $1',
+      ['pending']
+    );
+    return Number.parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Get queue metrics
+   */
+  async getQueueMetrics(): Promise<{
+    pending: number;
+    inProgress: number;
+    completed: number;
+    failed: number;
+    totalTasks: number;
+    avgProcessingTime: number;
+    errorRate: number;
+  }> {
+    const results = await Promise.all([
+      // Get task counts by status
+      this.query<{ status: string; count: string }>(
+        `SELECT status, COUNT(*) as count
+         FROM tasks
+         GROUP BY status`
+      ),
+      // Get average processing time for completed tasks
+      this.query<{ avg_time: string }>(
+        `SELECT AVG(EXTRACT(EPOCH FROM (completed_at - updated_at))) as avg_time
+         FROM tasks
+         WHERE status = 'completed'
+         AND completed_at IS NOT NULL`
+      ),
+      // Get error rate (failed tasks / total completed or failed tasks)
+      this.query<{ error_rate: string }>(
+        `SELECT 
+           CASE 
+             WHEN COUNT(*) = 0 THEN 0
+             ELSE ROUND(COUNT(*) FILTER (WHERE status = 'failed')::numeric / COUNT(*)::numeric, 2)
+           END as error_rate
+         FROM tasks
+         WHERE status IN ('completed', 'failed')`
+      )
+    ]);
+
+    const statusCounts = results[0].rows.reduce((acc, row) => {
+      acc[row.status] = Number.parseInt(row.count, 10);
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      pending: statusCounts.pending ?? 0,
+      inProgress: statusCounts.in_progress ?? 0,
+      completed: statusCounts.completed ?? 0,
+      failed: statusCounts.failed ?? 0,
+      totalTasks: Object.values(statusCounts).reduce((sum, count) => sum + count, 0),
+      avgProcessingTime: Number.parseFloat(results[1].rows[0].avg_time ?? '0'),
+      errorRate: Number.parseFloat(results[2].rows[0].error_rate ?? '0')
+    };
+  }
 } 

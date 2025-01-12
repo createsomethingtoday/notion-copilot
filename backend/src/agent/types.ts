@@ -1,134 +1,78 @@
-import type { 
-  NotionBlock, 
-  NotionPage, 
-  NotionDatabase, 
-  NotionBlockContent,
-  NotionPageCreateParams,
-  NotionPageUpdateParams
-} from '../types/notion';
+import type {
+  SearchParameters,
+  CreatePageParameters,
+  UpdatePageParameters,
+  UpdateBlockParameters,
+  PageObjectResponse,
+  DatabaseObjectResponse,
+  BlockObjectResponse,
+  PartialBlockObjectResponse
+} from '@notionhq/client/build/src/api-endpoints';
 
-// Task status tracking
+export type TaskType = 'search' | 'read' | 'write' | 'update' | 'delete';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type TaskPriority = '0' | '1' | '2' | '3'; // LOW to URGENT
 
-// Priority levels for tasks
-export enum TaskPriority {
-  LOW = 0,
-  NORMAL = 1,
-  HIGH = 2,
-  URGENT = 3
+export type NotionObjectType = 'page' | 'database' | 'block';
+
+export interface TaskTarget {
+  type: NotionObjectType;
+  id?: string;
+  parentId?: string;
 }
 
-// Base task interface
 export interface BaseTask {
   id: string;
-  type: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  description: string;
+  type: TaskType;
+  status: TaskStatus;
+  priority: TaskPriority;
+  description?: string;
   dependencies?: string[];
-  created: Date;
-  updated: Date;
+  created?: Date;
+  updated?: Date;
   completedAt?: Date;
   retryCount?: number;
   error?: Error;
-  result?: TaskResult;
-  priority: TaskPriority;
+  weight?: number;
   deadline?: Date;
-  weight?: number; // For fine-grained priority adjustment
 }
 
-// Task context for maintaining state
-export interface TaskContext {
-  userId: string;
-  sessionId: string;
-  workspaceId: string;
-  variables: Record<string, unknown>;
-  history: BaseTask[];
-  created: Date;
-  updated: Date;
-}
-
-// Specific task types
 export interface SearchTask extends BaseTask {
   type: 'search';
   query: string;
-  filters?: Record<string, unknown>;
+  filters?: Partial<SearchParameters>;
 }
 
 export interface ReadTask extends BaseTask {
   type: 'read';
-  target: {
-    type: 'page' | 'database' | 'block';
-    id: string;
-  };
+  target: TaskTarget;
 }
 
 export interface WriteTask extends BaseTask {
   type: 'write';
-  target: {
-    type: 'page' | 'block';
-    id?: string; // Optional for creation
-    parentId?: string;
-  };
-  content: NotionPageCreateParams | NotionBlockContent;
+  target: TaskTarget;
+  content: CreatePageParameters | PartialBlockObjectResponse;
 }
 
 export interface UpdateTask extends BaseTask {
   type: 'update';
-  target: {
-    type: 'page' | 'block';
-    id: string;
-  };
-  changes: NotionPageUpdateParams | Partial<NotionBlockContent>;
+  target: TaskTarget;
+  changes: UpdatePageParameters | UpdateBlockParameters;
 }
 
 export interface DeleteTask extends BaseTask {
   type: 'delete';
-  target: {
-    type: 'page' | 'block';
-    id: string;
-  };
+  target: TaskTarget;
 }
 
-// Task results
-export interface SearchResult {
-  pages: NotionPage[];
-  databases: NotionDatabase[];
-  blocks: NotionBlock[];
-}
+export type Task = SearchTask | ReadTask | WriteTask | UpdateTask | DeleteTask;
 
-export interface ReadResult {
-  content: NotionPage | NotionDatabase | NotionBlock;
-}
-
-export interface WriteResult {
-  created: NotionPage | NotionBlock;
-}
-
-export interface UpdateResult {
-  updated: NotionPage | NotionBlock;
-}
-
-export interface DeleteResult {
-  success: boolean;
-}
-
-// Base result interface for error handling
-export interface BaseResult {
-  error?: Error;
-}
-
-// Union type for all tasks
-export type Task = 
-  | SearchTask 
-  | ReadTask 
-  | WriteTask 
-  | UpdateTask 
-  | DeleteTask;
-
-// Union type for all results
-export type TaskResult = 
-  | (SearchResult & BaseResult)
-  | (ReadResult & BaseResult)
-  | (WriteResult & BaseResult)
-  | (UpdateResult & BaseResult)
-  | (DeleteResult & BaseResult); 
+export interface TaskResult {
+  pages?: PageObjectResponse[];
+  databases?: DatabaseObjectResponse[];
+  blocks?: BlockObjectResponse[];
+  content?: PageObjectResponse | DatabaseObjectResponse | BlockObjectResponse;
+  created?: PageObjectResponse | BlockObjectResponse;
+  updated?: PageObjectResponse | BlockObjectResponse;
+  success?: boolean;
+} 
