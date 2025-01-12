@@ -10,17 +10,20 @@ An intelligent assistant for Notion workspace management, powered by advanced ta
 - Priority Management
 - Performance Monitoring
 - Basic Notion Integration
+- PostgreSQL Integration
+- Database Migrations
 
 🟡 **In Development**
-- Storage Layer (PostgreSQL)
 - Task Planning System
 - Frontend Interface
+- Advanced Monitoring
+- Testing Infrastructure
 
 🔴 **Planned**
 - AI/NLP Integration
 - Content Building System
 - Security Features
-- Testing Infrastructure
+- Task Batching
 
 For detailed status, see [CODE_STATUS.md](./CODE_STATUS.md)
 
@@ -34,16 +37,19 @@ For detailed status, see [CODE_STATUS.md](./CODE_STATUS.md)
 - Real-time performance monitoring
 
 ### Queue Management
-- Persistent task storage (in-memory, PostgreSQL coming soon)
+- Persistent task storage with PostgreSQL
 - Priority queue with deadlines
 - Dependency handling
 - Progress tracking
+- Transaction support
+- Connection pooling
 - Batch operation support (planned)
 
 ### Performance Monitoring
 - Real-time metrics collection
 - Task execution analytics
 - Resource usage tracking
+- Database health monitoring
 - Automatic alerting
 - Performance optimization
 
@@ -52,6 +58,7 @@ For detailed status, see [CODE_STATUS.md](./CODE_STATUS.md)
 ### Prerequisites
 - Node.js 16+
 - TypeScript 4.5+
+- PostgreSQL 14+
 - Notion API Key
 - OpenAI API Key (coming soon)
 
@@ -85,6 +92,16 @@ cp frontend/.env.example frontend/.env
 # Edit frontend/.env with your settings
 ```
 
+4. Initialize database:
+```bash
+# Create and set up database
+cd backend
+npm run db:init
+
+# Optional: Seed test data
+npm run db:seed
+```
+
 ### Running the Application
 
 1. Start the backend:
@@ -100,6 +117,21 @@ npm run dev
 ```
 
 ## Development
+
+### Database Management
+```bash
+# Initialize database
+npm run db:init
+
+# Run migrations
+npm run db:migrate
+
+# Rollback last migration
+npm run db:rollback
+
+# Seed test data
+npm run db:seed
+```
 
 ### Building
 ```bash
@@ -130,12 +162,14 @@ npm test
 - Priority Manager: Handles task scheduling and ordering
 - Concurrency Manager: Controls parallel execution and rate limits
 - Metrics Collector: Tracks performance and system health
+- PostgreSQL Adapter: Handles data persistence and transactions
 
 ### Design Principles
 - Reliability: No task loss, guaranteed execution
 - Scalability: Handle increasing load gracefully
 - Observability: Full system visibility
 - Efficiency: Optimal resource utilization
+- Data Integrity: ACID compliance for all operations
 
 ## Contributing
 

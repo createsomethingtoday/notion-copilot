@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "db:init": "ts-node backend/src/scripts/init-db.ts",
+    "db:migrate": "ts-node backend/src/scripts/init-db.ts --migrate-only",
+    "db:rollback": "ts-node backend/src/scripts/init-db.ts --rollback",
+    "db:seed": "ts-node backend/src/scripts/seed-test-data.ts"
+  },
+  "dependencies": {
+    "@types/pg": "^8.11.10",
+    "@types/uuid": "^9.0.8",
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.1",
+    "uuid": "^9.0.1"
+  }
+}

@@ -11,7 +11,10 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint . --ext .ts",
-    "lint:fix": "eslint . --ext .ts --fix"
+    "lint:fix": "eslint . --ext .ts --fix",
+    "db:init": "ts-node src/scripts/init-db.ts",
+    "db:migrate": "ts-node src/scripts/init-db.ts --migrate-only",
+    "db:rollback": "ts-node src/scripts/init-db.ts --rollback"
   },
   "dependencies": {
     "@datadog/datadog-api-client": "^1.0.0",
