@@ -33,7 +33,7 @@ export class ErrorHandler {
   async handleError(
     error: Error,
     context?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<never> {
     // Convert to NotionAssistantError if needed
     const notionError = this.normalizeError(error, context);
 
@@ -52,10 +52,8 @@ export class ErrorHandler {
       await this.executeRetry(notionError, strategy);
     }
 
-    // If we get here and the error wasn't handled, rethrow
-    if (!strategy.retryable && !strategy.requiresUserInput) {
-      throw notionError;
-    }
+    // Always throw the error after handling
+    throw notionError;
   }
 
   /**
