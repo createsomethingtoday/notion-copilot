@@ -151,4 +151,7 @@ export interface MonitoringConfig {
     maxRetries: number;
     backoffMs: number;
   };
+  // System metrics configuration
+  systemMetricsInterval?: number;
+  enableGCMetrics?: boolean;
 } 

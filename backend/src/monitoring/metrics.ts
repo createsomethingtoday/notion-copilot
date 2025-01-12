@@ -57,6 +57,37 @@ export class MetricsService {
       type: 'histogram'
     });
 
+    // System metrics
+    this.registerMetric({
+      name: 'system_memory_usage',
+      help: 'System memory usage in bytes',
+      type: 'gauge'
+    });
+
+    this.registerMetric({
+      name: 'system_cpu_usage',
+      help: 'System CPU usage percentage',
+      type: 'gauge'
+    });
+
+    this.registerMetric({
+      name: 'system_event_loop_lag',
+      help: 'Node.js event loop lag in milliseconds',
+      type: 'histogram'
+    });
+
+    this.registerMetric({
+      name: 'system_gc_duration',
+      help: 'Garbage collection duration in milliseconds',
+      type: 'histogram'
+    });
+
+    this.registerMetric({
+      name: 'system_active_handles',
+      help: 'Number of active handles (sockets, file descriptors, etc)',
+      type: 'gauge'
+    });
+
     // Start periodic flush
     this.startPeriodicFlush();
   }

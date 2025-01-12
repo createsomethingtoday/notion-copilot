@@ -14,6 +14,12 @@ import { MetricType, MetricCategory } from './types';
 import type { NotionAssistantError } from '../errors/types';
 import { ErrorCategory } from '../errors/types';
 import { DatadogProvider } from './providers/datadog';
+import { SystemMetricsCollector } from './system';
+import { getSystemAlertConfigs } from './alerts';
+import type { Logger } from '../utils/logger';
+import type { PostgresAdapter } from '../db/postgres';
+import { Logger as LoggerImpl } from '../utils/logger';
+import { MetricsAdapter } from './adapter';
 
 interface ProviderInstance {
   sendMetrics(metrics: Metric[]): Promise<void>;
@@ -28,10 +34,54 @@ export class MonitoringService {
   private flushInterval?: NodeJS.Timeout;
   private alertCheckInterval?: NodeJS.Timeout;
   private provider?: ProviderInstance;
+  private systemMetrics?: SystemMetricsCollector;
+  private readonly logger: Logger;
+  private readonly cache: Map<string, Array<{ value: number; timestamp: Date; labels?: Record<string, string> }>> = new Map();
+  private readonly adapter: MetricsAdapter;
 
-  constructor(private config: MonitoringConfig) {
+  constructor(
+    private readonly config: MonitoringConfig,
+    private readonly db?: PostgresAdapter
+  ) {
+    this.logger = new LoggerImpl('MonitoringService');
+    this.adapter = new MetricsAdapter(this);
     this.setupProvider();
     this.setupIntervals();
+    this.setupSystemMetrics();
+    this.setupAlerts();
+  }
+
+  /**
+   * Register a new metric
+   */
+  registerMetric(definition: { name: string; help: string; type: string }): void {
+    this.cache.set(definition.name, []);
+  }
+
+  /**
+   * Record a metric value
+   */
+  async recordMetric(
+    name: string,
+    value: number,
+    labels: Record<string, string> = {}
+  ): Promise<void> {
+    // Add to cache
+    const cached = this.cache.get(name) ?? [];
+    cached.push({ value, timestamp: new Date(), labels });
+    this.cache.set(name, cached);
+
+    // Create metric
+    const metric: Metric = {
+      name,
+      type: MetricType.GAUGE, // Default to gauge
+      category: MetricCategory.PERFORMANCE, // Default category
+      value,
+      timestamp: new Date(),
+      labels
+    };
+
+    this.addMetric(metric);
   }
 
   /**
@@ -238,6 +288,9 @@ export class MonitoringService {
     if (this.alertCheckInterval) {
       clearInterval(this.alertCheckInterval);
     }
+    if (this.systemMetrics) {
+      this.systemMetrics.stop();
+    }
     await this.flush();
   }
 
@@ -409,5 +462,80 @@ export class MonitoringService {
     this.alertCheckInterval = setInterval(() => {
       void this.checkAlerts();
     }, 1000); // Check alerts every second
+  }
+
+  /**
+   * Set up system metrics collection
+   */
+  private setupSystemMetrics(): void {
+    this.systemMetrics = new SystemMetricsCollector(this.adapter, {
+      collectIntervalMs: this.config.systemMetricsInterval ?? 10000,
+      enableGCMetrics: this.config.enableGCMetrics ?? true
+    });
+    this.systemMetrics.start();
+  }
+
+  /**
+   * Set up default alert configurations
+   */
+  private setupAlerts(): void {
+    // Add system alert configs
+    const systemAlerts = getSystemAlertConfigs();
+    for (const alert of systemAlerts) {
+      this.addAlertConfig(alert);
+    }
+  }
+
+  /**
+   * Get metric values for a time range
+   */
+  async getMetricValues(
+    name: string,
+    startTime: Date,
+    endTime: Date
+  ): Promise<Array<{ value: number; timestamp: Date; labels?: Record<string, string> }>> {
+    const cached = this.cache.get(name) ?? [];
+    return cached.filter(m => 
+      m.timestamp >= startTime && m.timestamp <= endTime
+    );
+  }
+
+  /**
+   * Start periodic metric flushing
+   */
+  startPeriodicFlush(): void {
+    // Already handled by setupIntervals
+  }
+
+  /**
+   * Flush all metrics
+   */
+  async flushAllMetrics(): Promise<void> {
+    await this.flush();
+  }
+
+  /**
+   * Flush a specific metric
+   */
+  async flushMetric(name: string): Promise<void> {
+    const cached = this.cache.get(name);
+    if (!cached || cached.length === 0) return;
+
+    // Save to database if available
+    if (this.db) {
+      for (const metric of cached) {
+        await this.db.saveMetric(name, metric.value, metric.labels ?? {});
+      }
+    }
+
+    // Clear cache
+    this.cache.set(name, []);
+  }
+
+  /**
+   * Shutdown the service
+   */
+  async shutdown(): Promise<void> {
+    await this.destroy();
   }
 } 

@@ -52,17 +52,28 @@ For detailed status, see [CODE_STATUS.md](./CODE_STATUS.md)
 
 ### Performance Monitoring
 - Real-time metrics collection
+- System metrics tracking
 - Task execution analytics
-- Resource usage tracking
-- Database health monitoring
+- Resource usage monitoring
+- Database health checks
+- API performance tracking
+- Queue health monitoring
 - Automatic alerting
 - Performance optimization
+
+### Testing Infrastructure
+- Integration test framework
+- Database fixtures
+- Mock services
+- Test utilities
+- Health checks
+- Performance monitoring
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js 16+
-- TypeScript 4.5+
+- Node.js 18+
+- TypeScript 5.0+
 - PostgreSQL 14+
 - Notion API Key
 - OpenAI API Key (coming soon)
@@ -105,6 +116,18 @@ npm run db:init
 
 # Optional: Seed test data
 npm run db:seed
+```
+
+### Running Tests
+```bash
+# Run integration tests
+npm run test:integration
+
+# Run unit tests
+npm run test:unit
+
+# Run all tests with coverage
+npm run test:coverage
 ```
 
 ### Running the Application
@@ -168,6 +191,7 @@ npm test
 - Concurrency Manager: Controls parallel execution and rate limits
 - Metrics Collector: Tracks performance and system health
 - PostgreSQL Adapter: Handles data persistence and transactions
+- Test Framework: Ensures system reliability and quality
 
 ### Design Principles
 - Reliability: No task loss, guaranteed execution
@@ -175,6 +199,7 @@ npm test
 - Observability: Full system visibility
 - Efficiency: Optimal resource utilization
 - Data Integrity: ACID compliance for all operations
+- Testability: Comprehensive test coverage
 
 ## Contributing
 
