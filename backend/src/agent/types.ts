@@ -10,18 +10,30 @@ import type {
 // Task status tracking
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
+// Priority levels for tasks
+export enum TaskPriority {
+  LOW = 0,
+  NORMAL = 1,
+  HIGH = 2,
+  URGENT = 3
+}
+
 // Base task interface
 export interface BaseTask {
   id: string;
   type: string;
-  status: TaskStatus;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
   description: string;
-  error?: Error;
-  result?: unknown;
-  parentId?: string;
   dependencies?: string[];
   created: Date;
   updated: Date;
+  completedAt?: Date;
+  retryCount?: number;
+  error?: Error;
+  result?: TaskResult;
+  priority: TaskPriority;
+  deadline?: Date;
+  weight?: number; // For fine-grained priority adjustment
 }
 
 // Task context for maintaining state
