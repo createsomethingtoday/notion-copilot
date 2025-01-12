@@ -1,343 +1,277 @@
-# Notion Assistant Technical Specification
+# Technical Specification
 
-## System Design
+## System Architecture
 
-### 1. Frontend Architecture
+### Core Components
 
-#### 1.1 Chat Interface
-- React-based SPA with TypeScript
-- State management using Redux Toolkit
-- WebSocket connection for real-time updates
-- Message components with typing indicators
-- Progress visualization for ongoing tasks
-- Error state handling and retry mechanisms
-- Responsive design with Tailwind CSS
-
-#### 1.2 Authentication Flow
-- OAuth-based login flow for both app and Notion
-- Token management and refresh logic
-- Session persistence
-- Secure token storage in HTTP-only cookies
-- Auto-reconnection handling
-
-#### 1.3 User Experience
-- Message threading
-- Task status indicators
-- Rich text formatting
-- File attachment support
-- Keyboard shortcuts
-- Mobile-first design
-- Offline capability
-- Progressive loading
-
-### 2. Backend Architecture
-
-#### 2.1 API Layer
-- RESTful API endpoints
-- GraphQL API for complex queries
-- WebSocket server for real-time communication
-- Rate limiting middleware
-- Request validation
-- Error handling middleware
-- CORS configuration
-- Compression
-
-#### 2.2 Authentication & Authorization
+#### 1. Authentication System
 - JWT-based authentication
-- Role-based access control
-- Token refresh mechanism
-- Session management
-- IP-based rate limiting
-- OAuth token management for Notion
+- Redis-backed rate limiting
+  - Login: 5 attempts/5min, 15min block
+  - Registration: 3 attempts/hour, 2hr block
+- IP-based blocking for security
+- Secure password hashing with bcrypt
+- Session management with Redis
 
-#### 2.3 Task Processing
-- Queue-based task management
-- Priority scheduling
-- Concurrent task handling
+#### 2. Task Processing System
+- Priority-based task queue
+- Concurrent execution management
 - Progress tracking
-- Error recovery
-- Task persistence
-- Timeout handling
+- Error recovery with retries
+- Dead letter queue for failed tasks
+- Task persistence in PostgreSQL
 
-### 3. AI Agent System
+#### 3. Monitoring Infrastructure
+- System metrics collection
+- Performance monitoring
+- Error tracking
+- Datadog integration
+- Health check endpoints
+- Metric batching and deduplication
 
-#### 3.1 Natural Language Processing
-- Intent classification
-- Entity extraction
-- Context understanding
-- Task decomposition
-- Sentiment analysis
-- Language detection
-- Spelling correction
+#### 4. Data Storage
+- PostgreSQL for persistent data
+- Redis for caching and rate limiting
+- Transaction support
+- Connection pooling
+- Data migrations
 
-#### 3.2 Task Planning
-- Goal decomposition
-- Dependency analysis
-- Resource allocation
-- Permission verification
-- Risk assessment
-- Fallback planning
-- Progress estimation
+### Security Architecture
 
-#### 3.3 Execution Engine
-- Action orchestration
-- State management
-- Transaction handling
-- Rollback mechanisms
-- Progress reporting
-- Error handling
-- Recovery strategies
+#### Authentication Flow
+```mermaid
+sequenceDiagram
+    participant Client
+    participant RateLimit
+    participant Auth
+    participant Redis
+    participant DB
 
-### 4. Notion Integration
+    Client->>RateLimit: Login Request
+    RateLimit->>Redis: Check Rate Limit
+    alt Limit Exceeded
+        Redis-->>RateLimit: Blocked
+        RateLimit-->>Client: 429 Too Many Requests
+    else Limit OK
+        RateLimit->>Auth: Process Login
+        Auth->>DB: Verify Credentials
+        DB-->>Auth: User Data
+        Auth->>Redis: Create Session
+        Auth-->>Client: JWT Token
+    end
+```
 
-#### 4.1 API Client
-- Rate limit handling
-- Retry logic
-- Error mapping
-- Response caching
-- Batch operations
-- Cursor-based pagination
-- Webhook handling
-
-#### 4.2 Data Operations
-- CRUD operations for pages
-- Database management
-- Block manipulation
-- Comment handling
-- User management
-- Permission updates
-- Template handling
-
-#### 4.3 Sync Management
-- Change tracking
-- Conflict resolution
-- Version control
-- Delta updates
-- Cache invalidation
-- Real-time updates
-
-### 5. Data Storage
-
-#### 5.1 Primary Database (MongoDB)
-```javascript
-// User Schema
-{
-  id: ObjectId,
-  email: String,
-  name: String,
-  notionWorkspaces: [{
-    workspaceId: String,
-    accessToken: String,
-    scopes: [String],
-    botId: String
-  }],
-  preferences: Object,
-  createdAt: Date,
-  updatedAt: Date
+#### Rate Limiting Implementation
+```typescript
+interface RateLimitOptions {
+  points: number;        // Number of attempts allowed
+  duration: number;      // Time window in seconds
+  blockDuration: number; // Block duration in seconds
+  keyPrefix: string;     // Redis key prefix
 }
 
-// Task Schema
-{
-  id: ObjectId,
-  userId: ObjectId,
-  type: String,
-  status: String,
-  progress: Number,
-  context: Object,
-  result: Object,
-  error: Object,
-  startedAt: Date,
-  completedAt: Date
-}
+class RateLimiter {
+  constructor(
+    private redis: RedisClientType,
+    private monitoring: MonitoringService,
+    private options: RateLimitOptions
+  ) {}
 
-// Chat Schema
-{
-  id: ObjectId,
-  userId: ObjectId,
-  messages: [{
-    role: String,
-    content: String,
-    timestamp: Date,
-    taskId: ObjectId
-  }],
-  context: Object,
-  createdAt: Date,
-  updatedAt: Date
+  async checkLimit(ip: string): Promise<boolean> {
+    const key = `${this.options.keyPrefix}:${ip}`;
+    const attempts = await this.redis.incr(key);
+    
+    if (attempts === 1) {
+      await this.redis.expire(key, this.options.duration);
+    }
+
+    if (attempts > this.options.points) {
+      await this.redis.expire(key, this.options.blockDuration);
+      this.monitoring.increment('rate_limit.blocked', { ip });
+      return false;
+    }
+
+    return true;
+  }
 }
 ```
 
-#### 5.2 Cache Layer (Redis)
-- Session data
-- Rate limit counters
-- Task status
-- Notion workspace metadata
-- Frequently accessed data
-- WebSocket connections
-- Temporary tokens
+### Monitoring Architecture
 
-### 6. Security Measures
+#### Metric Collection
+```typescript
+interface MetricOptions {
+  tags?: Record<string, string>;
+  timestamp?: number;
+  interval?: number;
+}
 
-#### 6.1 Data Protection
-- End-to-end encryption for sensitive data
-- At-rest encryption
-- Secure key rotation
-- Data anonymization
-- Access logging
-- Regular security audits
+class MonitoringService {
+  private metrics: Map<string, MetricValue[]>;
+  private flushInterval: NodeJS.Timer;
 
-#### 6.2 API Security
-- Request signing
-- API key rotation
-- Input sanitization
-- Output encoding
-- Rate limiting
-- IP filtering
-- Security headers
+  constructor(options: {
+    provider: 'datadog' | 'console';
+    flushIntervalMs?: number;
+    batchSize?: number;
+    deduplicate?: boolean;
+  }) {
+    // Initialize monitoring
+  }
 
-### 7. Monitoring & Logging
+  public increment(metric: string, options?: MetricOptions): void;
+  public gauge(metric: string, value: number, options?: MetricOptions): void;
+  public histogram(metric: string, value: number, options?: MetricOptions): void;
+}
+```
 
-#### 7.1 Application Monitoring
-- Performance metrics
-  - System metrics (CPU, memory, event loop)
-  - Task execution metrics
-  - API latency tracking
-  - Resource utilization
-  - Queue performance
-  - Database health
-  - Error rates
-  - Custom metrics
+#### Health Checks
+```typescript
+interface HealthStatus {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  checks: {
+    redis: boolean;
+    database: boolean;
+    monitoring: boolean;
+  };
+  metrics: {
+    uptime: number;
+    memoryUsage: number;
+    activeConnections: number;
+  };
+}
+```
 
-- Metric Collection
-  - Real-time collection
-  - Aggregation support
-  - Label-based filtering
-  - Time-based queries
-  - Custom dimensions
+### Error Handling
 
-- Alert System
-  - Configurable thresholds
-  - Multiple severity levels
-  - Label-based routing
-  - Alert grouping
-  - Notification webhooks
-  - Alert history
+#### Error Types
+```typescript
+enum ErrorCode {
+  RATE_LIMITED = 'rate_limited',
+  UNAUTHORIZED = 'unauthorized',
+  INVALID_INPUT = 'invalid_input',
+  INTERNAL_ERROR = 'internal_error',
+  SERVICE_UNAVAILABLE = 'service_unavailable'
+}
 
-#### 7.2 Log Management
-- Structured logging
-- Log levels
-- Log rotation
-- Error aggregation
-- Audit trails
-- Performance logs
-- Security events
+interface ErrorResponse {
+  code: ErrorCode;
+  message: string;
+  details?: Record<string, any>;
+  retryAfter?: number;
+}
+```
 
-### 8. Testing Infrastructure
+#### Recovery Strategies
+1. Rate Limiting
+   - Exponential backoff
+   - Clear block after duration
+   - Monitoring alerts
 
-#### 8.1 Test Framework
-- Integration Tests
-  - Database operations
-  - Task execution
-  - Monitoring system
-  - API endpoints
-  - Queue operations
-  - Alert system
+2. Service Failures
+   - Circuit breaker pattern
+   - Fallback mechanisms
+   - Graceful degradation
 
-- Unit Tests
-  - Business logic
-  - Data validation
-  - Error handling
-  - Utility functions
-  - Helper classes
+### Performance Considerations
 
-- Test Utilities
-  - Database fixtures
-  - Mock services
-  - Test data generators
-  - Assertion helpers
-  - Setup/teardown utilities
+#### Optimization Strategies
+1. Redis Operations
+   - Connection pooling
+   - Pipeline commands
+   - Key expiration
 
-#### 8.2 Performance Testing
-- Load Tests
-  - Concurrent users
-  - Task throughput
-  - API response times
-  - Resource usage
-  - Database performance
+2. Monitoring
+   - Metric batching
+   - Deduplication
+   - Async flush
 
-- Stress Tests
-  - System limits
-  - Error handling
-  - Recovery behavior
-  - Resource constraints
-  - Edge cases
+3. Authentication
+   - Cache JWT verification
+   - Distributed rate limiting
+   - IP blocking cache
 
-#### 8.3 CI/CD Pipeline
-- Automated testing
-- Code quality checks
-- Security scanning
-- Performance testing
-- Deployment automation
-- Rollback procedures
-- Environment management
+### Development Guidelines
 
-### 9. Deployment Architecture
+#### Code Structure
+```
+src/
+├── middleware/
+│   ├── rate-limit.ts
+│   ├── auth.ts
+│   └── monitoring.ts
+├── monitoring/
+│   ├── service.ts
+│   └── providers/
+│       └── datadog.ts
+├── routes/
+│   └── auth.ts
+└── utils/
+    ├── redis.ts
+    └── errors.ts
+```
 
-#### 9.1 Infrastructure
-- Containerized deployment
-- Load balancing
-- Auto-scaling
-- CDN integration
-- Database clustering
-- Cache distribution
-- Backup systems
+#### Testing Strategy
+1. Unit Tests
+   - Middleware functions
+   - Service methods
+   - Utility functions
 
-## Implementation Phases
+2. Integration Tests
+   - Rate limiting behavior
+   - Authentication flow
+   - Monitoring integration
 
-### Phase 1: Core Infrastructure (Complete)
-1. Task queue system
-2. Database integration
-3. Basic monitoring
-4. Error handling
-5. Type safety
+3. Load Tests
+   - Concurrent requests
+   - Rate limit effectiveness
+   - System performance
 
-### Phase 2: Quality & Scale (Current)
-1. Comprehensive testing
-2. Advanced monitoring
-3. Performance optimization
-4. Batch operations
-5. CI/CD pipeline
+### Deployment Architecture
 
-### Phase 3: Features & Intelligence
-1. NLP integration
-2. Content building
-3. Rich UI features
-4. Enhanced security
-5. Analytics dashboard
+#### Environment Configuration
+```bash
+# Required
+REDIS_URL=redis://localhost:6379
+DATADOG_API_KEY=your_api_key
+JWT_SECRET=your_secret
 
-## Technical Debt Considerations
+# Optional
+METRICS_FLUSH_INTERVAL=10000
+METRICS_BATCH_SIZE=50
+RATE_LIMIT_POINTS=5
+RATE_LIMIT_DURATION=300
+```
 
-1. Regular dependency updates
-2. Code refactoring cycles
-3. Technical documentation
-4. Performance optimization
-5. Security updates
-6. API version management
-7. Database optimization
+#### Health Monitoring
+1. System Metrics
+   - CPU usage
+   - Memory usage
+   - Event loop lag
+   - Active handles
 
-## Risk Management
+2. Application Metrics
+   - Request rate
+   - Error rate
+   - Response time
+   - Rate limit events
 
-### Technical Risks
-1. API rate limits
-2. Data consistency
-3. System scalability
-4. Integration complexity
-5. Performance bottlenecks
+### Future Considerations
 
-### Mitigation Strategies
-1. Robust error handling
-2. Fallback mechanisms
-3. Circuit breakers
-4. Cache strategies
-5. Load testing
-6. Security audits
-7. Backup systems 
+1. Security Enhancements
+   - OAuth integration
+   - 2FA support
+   - API key management
+   - Audit logging
+
+2. Performance Improvements
+   - Redis cluster
+   - Metric aggregation
+   - Request batching
+   - Cache optimization
+
+3. Monitoring Upgrades
+   - Custom dashboards
+   - Alert configuration
+   - Log aggregation
+   - Trace sampling 

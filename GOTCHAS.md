@@ -1,224 +1,175 @@
-# Notion Assistant: Gotchas and Edge Cases
+# Known Issues and Solutions
 
-## API Integration Challenges
+## Monitoring Issues
 
-### Notion API Limitations
-1. **Rate Limits**
-   - 3 requests/second per token
-   - Need to implement token bucketing
-   - Consider workspace-level vs user-level limits
-   - Implement retry with exponential backoff
+### Datadog Authentication Failures
+**Symptoms:**
+- `NotionAssistantError: Datadog authentication failed`
+- Repeated metric flush failures
+- Unauthorized errors in logs
 
-2. **Permission Scopes**
-   - Workspace-level vs page-level permissions
-   - Private pages may be inaccessible
-   - Permission inheritance complexities
-   - Need to handle "403 Forbidden" gracefully
+**Solutions:**
+1. Check environment variables:
+   ```bash
+   # Required in .env
+   DATADOG_API_KEY=your_api_key
+   DATADOG_APP_KEY=your_app_key  # if using API endpoints
+   ```
 
-3. **Content Blocks**
-   - 1000 block limit per page
-   - Complex nested structures
-   - Some block types may not be supported
-   - Rich text formatting limitations
+2. Verify API key validity:
+   ```bash
+   curl -X GET "https://api.datadoghq.com/api/v1/validate" \
+   -H "Accept: application/json" \
+   -H "DD-API-KEY: ${DATADOG_API_KEY}"
+   ```
 
-4. **Search Limitations**
-   - No full-text search
-   - Limited filter combinations
-   - Search results pagination
-   - Case sensitivity issues
+3. Development mode:
+   ```typescript
+   // Use development mode to prevent auth errors locally
+   const monitoring = new MonitoringService({
+     provider: process.env.NODE_ENV === 'production' ? 'datadog' : 'console'
+   });
+   ```
 
-## AI Agent Challenges
+### Metric Flooding
+**Symptoms:**
+- Large batches of duplicate metrics
+- Memory usage spikes
+- Frequent flush attempts
 
-### Context Management
-1. **Token Limits**
-   - LLM context window constraints
-   - Need for context summarization
-   - Maintaining conversation history
-   - Handling large Notion pages
+**Solutions:**
+1. Adjust batch settings:
+   ```typescript
+   const monitoring = new MonitoringService({
+     flushIntervalMs: 10000,  // Increase interval
+     batchSize: 50,          // Reduce batch size
+     deduplicate: true       // Enable deduplication
+   });
+   ```
 
-2. **Task Understanding**
-   - Ambiguous user instructions
-   - Multiple possible interpretations
-   - Conflicting requirements
-   - Incomplete information
+2. Filter system metrics:
+   ```typescript
+   const monitoring = new MonitoringService({
+     systemMetrics: {
+       memoryUsage: true,
+       cpuUsage: true,
+       eventLoopLag: false,  // Disable noisy metrics
+       activeHandles: false
+     }
+   });
+   ```
 
-3. **Error Recovery**
-   - Partial task completion
-   - State inconsistency
-   - Failed operations rollback
-   - Lost connection recovery
+## Development Environment
 
-### Task Execution
+### Port Conflicts (EADDRINUSE)
+**Symptoms:**
+- `Error: listen EADDRINUSE: address already in use :::3001`
+- Server fails to start
+- Development server crashes
 
-1. **Complex Operations**
-   - Multi-step operations
-   - Dependent tasks
-   - Transaction-like operations
-   - Progress tracking complexity
+**Solutions:**
+1. Find and kill existing process:
+   ```bash
+   # Find process
+   lsof -i :3001
+   
+   # Kill process
+   kill -9 <PID>
+   ```
 
-2. **Resource Management**
-   - Memory usage in large operations
-   - CPU intensive tasks
-   - Network bandwidth constraints
-   - Concurrent task limits
+2. Use dynamic port assignment:
+   ```typescript
+   // In src/index.ts
+   const PORT = process.env.PORT || findAvailablePort(3001, 3010);
+   ```
 
-## User Experience Edge Cases
+3. Development script:
+   ```bash
+   # Add to package.json
+   "dev": "kill-port 3001 && ts-node-dev src/index.ts"
+   ```
 
-### Authentication
-1. **Token Management**
-   - Expired tokens
-   - Revoked access
-   - Multiple workspace connections
-   - Failed OAuth flows
+### Redis Type Issues
+**Symptoms:**
+- `Module '"../server"' has no exported member 'redis'`
+- Type errors with Redis client
+- Missing type definitions
 
-2. **Session Handling**
-   - Timeout during operations
-   - Multiple device sessions
-   - Browser restrictions
-   - Cookie limitations
+**Solutions:**
+1. Proper Redis export:
+   ```typescript
+   // In src/server.ts
+   import { createClient } from 'redis';
+   import type { RedisClientType } from 'redis';
+   
+   export const redis: RedisClientType = createClient({
+     url: process.env.REDIS_URL
+   });
+   ```
 
-### Real-time Updates
-1. **Connection Issues**
-   - WebSocket disconnections
-   - Message ordering
-   - Duplicate messages
-   - Missed updates
+2. Type assertions:
+   ```typescript
+   // When strict typing is needed
+   import type { RedisClientType } from 'redis';
+   const typedRedis = redis as RedisClientType;
+   ```
 
-2. **State Synchronization**
-   - Client-server state mismatch
-   - Concurrent modifications
-   - Offline changes
-   - Conflict resolution
+## Best Practices
 
-## Data Management Challenges
+### Environment Configuration
+1. Use `.env.example`:
+   ```bash
+   # Required variables
+   REDIS_URL=redis://localhost:6379
+   DATADOG_API_KEY=
+   PORT=3001
+   ```
 
-### Storage
-1. **Large Data Sets**
-   - Pagination handling
-   - Cache invalidation
-   - Database growth
-   - Backup management
+2. Validate environment:
+   ```typescript
+   function validateEnv() {
+     const required = ['REDIS_URL', 'DATADOG_API_KEY'];
+     const missing = required.filter(key => !process.env[key]);
+     if (missing.length) {
+       throw new Error(`Missing required env vars: ${missing.join(', ')}`);
+     }
+   }
+   ```
 
-2. **Data Consistency**
-   - Race conditions
-   - Partial updates
-   - Cascade operations
-   - Version conflicts
+### Error Recovery
+1. Implement backoff for monitoring:
+   ```typescript
+   class MonitoringService {
+     private async flushWithBackoff(retries = 3) {
+       for (let i = 0; i < retries; i++) {
+         try {
+           await this.flush();
+           break;
+         } catch (error) {
+           if (i === retries - 1) throw error;
+           await sleep(Math.pow(2, i) * 1000);
+         }
+       }
+     }
+   }
+   ```
 
-### Security
-1. **Access Control**
-   - Fine-grained permissions
-   - Token exposure
-   - Cross-site scripting
-   - CSRF protection
+2. Graceful degradation:
+   ```typescript
+   // Fall back to local storage if Redis fails
+   const storage = redis.isReady ? redis : new LocalStorage();
+   ```
 
-2. **Data Privacy**
-   - PII handling
-   - Data encryption
-   - Audit logging
-   - Data retention
+### Development Workflow
+1. Use consistent ports:
+   - Backend: 3001
+   - Frontend: 3000
+   - Redis: 6379
+   - Metrics: 9090
 
-## Performance Considerations
-
-### Scalability
-1. **Resource Usage**
-   - Memory leaks
-   - CPU spikes
-   - Network bottlenecks
-   - Database connection pools
-
-2. **Concurrent Users**
-   - Load balancing
-   - Session affinity
-   - Queue management
-   - Resource contention
-
-### Optimization
-1. **Response Times**
-   - Long-running operations
-   - Background tasks
-   - Cache strategies
-   - Query optimization
-
-2. **Resource Efficiency**
-   - Connection pooling
-   - Memory management
-   - Thread management
-   - I/O optimization
-
-## Integration Edge Cases
-
-### Third-party Services
-1. **API Dependencies**
-   - Service outages
-   - Version changes
-   - Deprecated features
-   - Breaking changes
-
-2. **External Systems**
-   - Authentication flows
-   - Data format changes
-   - Timeout handling
-   - Error propagation
-
-## Development Workflow
-
-### Testing Challenges
-1. **Test Coverage**
-   - Integration testing
-   - Mock data generation
-   - Edge case simulation
-   - Performance testing
-
-2. **Deployment Issues**
-   - Environment differences
-   - Configuration management
-   - Migration scripts
-   - Rollback procedures
-
-## Mitigation Strategies
-
-### General Approaches
-1. **Robust Error Handling**
-   - Detailed error messages
-   - Fallback mechanisms
-   - Retry strategies
-   - User feedback
-
-2. **Monitoring and Alerting**
-   - Performance metrics
-   - Error tracking
-   - Usage patterns
-   - Capacity planning
-
-3. **Documentation**
-   - API documentation
-   - Error codes
-   - Troubleshooting guides
-   - Known limitations
-
-4. **User Communication**
-   - Status updates
-   - Error notifications
-   - Progress indicators
-   - Help documentation
-
-## Regular Review Items
-
-1. **Performance Monitoring**
-   - Response times
-   - Error rates
-   - Resource usage
-   - User satisfaction
-
-2. **Security Audits**
-   - Vulnerability scanning
-   - Access reviews
-   - Token rotation
-   - Security patches
-
-3. **Maintenance Tasks**
-   - Database cleanup
-   - Log rotation
-   - Cache invalidation
-   - Dependency updates 
+2. Standard startup:
+   ```bash
+   # Start all services
+   docker-compose up -d redis
+   npm run dev
+   ``` 

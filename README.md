@@ -1,218 +1,177 @@
 # Notion Assistant
 
-An intelligent assistant for Notion workspace management, powered by advanced task execution and NLP.
-
-## Current Status
-
-🟢 **Production Ready**
-- Task Queue System
-- Worker Pool Management
-- Type-safe Task Execution
-- Concurrency Management
-- Priority Management
-- Performance Monitoring
-- Basic Notion Integration
-- PostgreSQL Integration
-- Database Migrations
-
-🟡 **In Development**
-- Task Recovery System
-- Task Scheduling Logic
-- Advanced Monitoring
-- Testing Infrastructure
-
-🔴 **Planned**
-- AI/NLP Integration
-- Content Building System
-- Security Features
-- Task Batching
-
-For detailed status, see [CODE_STATUS.md](./CODE_STATUS.md)
+A powerful AI-powered assistant for managing and interacting with Notion workspaces.
 
 ## Features
 
-### Core System
-- Priority-based task scheduling
-- Worker pool with auto-scaling
-- Type-safe task execution
-- Concurrent operation handling
-- Rate limiting and resource protection
-- Automatic retry and error recovery
-- Real-time performance monitoring
+- 🔒 **Secure Authentication**
+  - JWT-based authentication
+  - Rate limiting protection
+  - IP-based blocking for security
+  - Redis-backed distributed rate limiting
 
-### Queue Management
-- Persistent task storage with PostgreSQL
-- Priority queue with deadlines
-- Worker pool management
-- Dependency handling
-- Progress tracking
-- Transaction support
-- Connection pooling
-- Batch operation support (planned)
+- 🚀 **Task Processing**
+  - Robust task queue system
+  - Concurrent task execution
+  - Progress tracking
+  - Error recovery
 
-### Performance Monitoring
-- Real-time metrics collection
-- System metrics tracking
-- Task execution analytics
-- Resource usage monitoring
-- Database health checks
-- API performance tracking
-- Queue health monitoring
-- Automatic alerting
-- Performance optimization
+- 📊 **Advanced Monitoring**
+  - System metrics tracking
+  - Performance monitoring
+  - Error tracking
+  - Datadog integration
 
-### Testing Infrastructure
-- Integration test framework
-- Database fixtures
-- Mock services
-- Test utilities
-- Health checks
-- Performance monitoring
+- 🔄 **Notion Integration**
+  - Real-time updates
+  - Workspace management
+  - Content synchronization
+  - Page operations
 
 ## Getting Started
 
 ### Prerequisites
+
 - Node.js 18+
-- TypeScript 5.0+
+- Redis 6+
 - PostgreSQL 14+
-- Notion API Key
-- OpenAI API Key (coming soon)
+- Datadog account (optional)
 
 ### Installation
 
 1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/notion-assistant.git
-cd notion-assistant
-```
+   ```bash
+   git clone https://github.com/yourusername/notion-assistant.git
+   cd notion-assistant
+   ```
 
 2. Install dependencies:
-```bash
-# Install backend dependencies
-cd backend
-npm install
+   ```bash
+   npm install
+   ```
 
-# Install frontend dependencies
-cd ../frontend
-npm install
+3. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. Start Redis:
+   ```bash
+   docker-compose up -d redis
+   ```
+
+5. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+## Configuration
+
+### Required Environment Variables
+
+```bash
+# Server
+PORT=3001
+NODE_ENV=development
+
+# Database
+POSTGRES_URL=postgresql://user:pass@localhost:5432/notion_assistant
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# Authentication
+JWT_SECRET=your-secret-key
+JWT_EXPIRES_IN=24h
+
+# Monitoring
+DATADOG_API_KEY=your-api-key
 ```
 
-3. Configure environment:
+### Optional Environment Variables
+
 ```bash
-# Backend configuration
-cp backend/.env.example backend/.env
-# Edit backend/.env with your settings
+# Monitoring
+DATADOG_APP_KEY=your-app-key
+METRICS_FLUSH_INTERVAL=10000
+METRICS_BATCH_SIZE=50
 
-# Frontend configuration
-cp frontend/.env.example frontend/.env
-# Edit frontend/.env with your settings
-```
+# Rate Limiting
+LOGIN_RATE_LIMIT_POINTS=5
+LOGIN_RATE_LIMIT_DURATION=300
+LOGIN_BLOCK_DURATION=900
 
-4. Initialize database:
-```bash
-# Create and set up database
-cd backend
-npm run db:init
-
-# Optional: Seed test data
-npm run db:seed
-```
-
-### Running Tests
-```bash
-# Run integration tests
-npm run test:integration
-
-# Run unit tests
-npm run test:unit
-
-# Run all tests with coverage
-npm run test:coverage
-```
-
-### Running the Application
-
-1. Start the backend:
-```bash
-cd backend
-npm run dev
-```
-
-2. Start the frontend:
-```bash
-cd frontend
-npm run dev
+REGISTER_RATE_LIMIT_POINTS=3
+REGISTER_RATE_LIMIT_DURATION=3600
+REGISTER_BLOCK_DURATION=7200
 ```
 
 ## Development
 
-### Database Management
+### Running Tests
+
 ```bash
-# Initialize database
-npm run db:init
+# Unit tests
+npm run test
 
-# Run migrations
-npm run db:migrate
+# Integration tests
+npm run test:integration
 
-# Rollback last migration
-npm run db:rollback
-
-# Seed test data
-npm run db:seed
+# E2E tests
+npm run test:e2e
 ```
 
-### Building
-```bash
-# Build backend
-cd backend
-npm run build
+### Code Quality
 
-# Build frontend
-cd frontend
-npm run build
+```bash
+# Lint code
+npm run lint
+
+# Fix linting issues
+npm run lint:fix
+
+# Type check
+npm run type-check
 ```
 
-### Testing
-```bash
-# Run backend tests
-cd backend
-npm test
+## Monitoring
 
-# Run frontend tests
-cd frontend
-npm test
-```
+### Available Metrics
+
+- System metrics (CPU, memory, event loop)
+- API request rates and latencies
+- Task processing metrics
+- Rate limiting events
+- Error rates and types
+
+### Health Checks
+
+- `/health`: Basic health check
+- `/health/redis`: Redis connection status
+- `/health/db`: Database connection status
+- `/metrics`: Prometheus metrics endpoint
+
+## Troubleshooting
+
+See [GOTCHAS.md](./GOTCHAS.md) for common issues and solutions.
 
 ## Architecture
 
-### Core Components
-- Task Queue: Manages task lifecycle and execution
-- Priority Manager: Handles task scheduling and ordering
-- Concurrency Manager: Controls parallel execution and rate limits
-- Metrics Collector: Tracks performance and system health
-- PostgreSQL Adapter: Handles data persistence and transactions
-- Test Framework: Ensures system reliability and quality
-
-### Design Principles
-- Reliability: No task loss, guaranteed execution
-- Scalability: Handle increasing load gracefully
-- Observability: Full system visibility
-- Efficiency: Optimal resource utilization
-- Data Integrity: ACID compliance for all operations
-- Testability: Comprehensive test coverage
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+See [TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md) for detailed architecture documentation.
 
 ## Roadmap
 
 See [NEXT_STEPS.md](./NEXT_STEPS.md) for planned features and improvements.
 
-## Known Issues
+## Contributing
 
-See [CODE_STATUS.md](./CODE_STATUS.md) for current known issues and technical debt.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
