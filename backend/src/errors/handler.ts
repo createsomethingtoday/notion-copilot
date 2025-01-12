@@ -146,9 +146,7 @@ export class ErrorHandler {
         const delay = backoffMs * (2 ** (attempt - 1));
         await new Promise(resolve => setTimeout(resolve, delay));
 
-        // Retry the operation
-        // Note: The actual retry logic should be provided by the caller
-        return;
+        // Remove return statement to ensure error is thrown
       } catch (retryError) {
         if (attempt === maxRetries) {
           throw this.normalizeError(retryError as Error, {
@@ -171,11 +169,11 @@ export class ErrorHandler {
       try {
         return await fn(...args);
       } catch (error) {
-        await this.handleError(error as Error, {
+        // Always throw the normalized error
+        throw await this.handleError(error as Error, {
           ...context,
           arguments: args
         });
-        throw error; // If handleError doesn't resolve the error
       }
     };
   }

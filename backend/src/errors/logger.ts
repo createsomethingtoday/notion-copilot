@@ -164,7 +164,7 @@ export class Logger {
 
     switch (entry.level) {
       case ErrorSeverity.DEBUG:
-        console.debug(message, entry.context);
+        console.log(message, entry.context);
         break;
       case ErrorSeverity.INFO:
         console.info(message, entry.context);

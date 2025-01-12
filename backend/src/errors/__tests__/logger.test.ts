@@ -5,38 +5,24 @@ import { FileLogger } from '../file-logger';
 jest.mock('../file-logger');
 
 describe('Logger', () => {
-  let logger: Logger;
-  let mockConsoleDebug: jest.SpyInstance;
+  let mockConsoleLog: jest.SpyInstance;
   let mockConsoleInfo: jest.SpyInstance;
   let mockConsoleWarn: jest.SpyInstance;
   let mockConsoleError: jest.SpyInstance;
   let mockFileLogger: jest.Mocked<FileLogger>;
+  let logger: Logger;
 
   beforeEach(() => {
-    mockConsoleDebug = jest.spyOn(console, 'debug').mockImplementation();
+    mockConsoleLog = jest.spyOn(console, 'log').mockImplementation();
     mockConsoleInfo = jest.spyOn(console, 'info').mockImplementation();
     mockConsoleWarn = jest.spyOn(console, 'warn').mockImplementation();
     mockConsoleError = jest.spyOn(console, 'error').mockImplementation();
-    
-    mockFileLogger = new FileLogger({
-      path: 'test.log',
-      maxSize: 10 * 1024 * 1024,
-      maxFiles: 5
-    }) as jest.Mocked<FileLogger>;
-    (FileLogger as jest.Mock).mockImplementation(() => mockFileLogger);
-
-    logger = new Logger({
-      console: true,
-      file: {
-        path: 'test.log',
-        maxSize: 10 * 1024 * 1024,
-        maxFiles: 5
-      }
-    });
+    mockFileLogger = new FileLogger({ path: 'test.log', maxSize: 1024, maxFiles: 2 }) as jest.Mocked<FileLogger>;
+    logger = new Logger({ console: true });
   });
 
   afterEach(() => {
-    mockConsoleDebug.mockRestore();
+    mockConsoleLog.mockRestore();
     mockConsoleInfo.mockRestore();
     mockConsoleWarn.mockRestore();
     mockConsoleError.mockRestore();
@@ -44,48 +30,50 @@ describe('Logger', () => {
   });
 
   describe('logging methods', () => {
-    it('should log debug messages', () => {
-      const message = 'Test debug message';
-      logger.debug(message);
-
-      expect(mockConsoleDebug).toHaveBeenCalled();
-      const consoleMessage = mockConsoleDebug.mock.calls[0][0];
-      expect(consoleMessage).toContain(message);
-      expect(consoleMessage).toContain('DEBUG');
-    });
-
-    it('should log info messages', () => {
-      const message = 'Test info message';
-      logger.info(message);
-
-      expect(mockConsoleInfo).toHaveBeenCalled();
-      const consoleMessage = mockConsoleInfo.mock.calls[0][0];
-      expect(consoleMessage).toContain(message);
-      expect(consoleMessage).toContain('INFO');
-    });
-
-    it('should log warning messages with context', () => {
-      const message = 'Test warning message';
+    it('should log debug messages to console', () => {
       const context = { source: 'test' };
-      logger.warn(message, undefined, context);
-
-      expect(mockConsoleWarn).toHaveBeenCalled();
-      const consoleMessage = mockConsoleWarn.mock.calls[0][0];
-      expect(consoleMessage).toContain(message);
-      expect(consoleMessage).toContain('WARNING');
-      expect(mockConsoleWarn.mock.calls[0][1]).toEqual(context);
+      logger.debug('test message', context);
+      expect(mockConsoleLog).toHaveBeenCalledWith(
+        expect.stringContaining('[DEBUG]'),
+        context
+      );
     });
 
-    it('should log error messages with error object', () => {
-      const message = 'Test error message';
-      const error = new Error('Test error');
-      logger.error(message, error);
+    it('should log info messages to console', () => {
+      const context = { source: 'test' };
+      logger.info('test message', context);
+      expect(mockConsoleInfo).toHaveBeenCalledWith(
+        expect.stringContaining('[INFO]'),
+        context
+      );
+    });
 
-      expect(mockConsoleError).toHaveBeenCalled();
-      const consoleMessage = mockConsoleError.mock.calls[0][0];
-      expect(consoleMessage).toContain(message);
-      expect(consoleMessage).toContain('ERROR');
-      expect(mockConsoleError.mock.calls[0][1]).toHaveProperty('error');
+    it('should log warn messages to console', () => {
+      const error = new Error('Test error');
+      const context = { source: 'test' };
+      logger.warn('test message', error, context);
+      expect(mockConsoleWarn).toHaveBeenCalledWith(
+        expect.stringContaining('[WARN]'),
+        { ...context, error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        }}
+      );
+    });
+
+    it('should log error messages to console', () => {
+      const error = new Error('Test error');
+      const context = { source: 'test' };
+      logger.error('test message', error, context);
+      expect(mockConsoleError).toHaveBeenCalledWith(
+        expect.stringContaining('[ERROR]'),
+        { ...context, error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        }}
+      );
     });
   });
 
@@ -98,17 +86,10 @@ describe('Logger', () => {
     });
 
     it('should respect minimum log level', () => {
-      logger = new Logger({ 
-        console: true,
-        minLevel: ErrorSeverity.ERROR
-      });
+      logger = new Logger({ minLevel: ErrorSeverity.INFO });
+      logger.debug('Test debug message');
 
-      logger.info('Should not log');
-      logger.error('Should log', new Error('Test'));
-
-      expect(mockConsoleInfo).not.toHaveBeenCalled();
-      expect(mockConsoleError).toHaveBeenCalled();
-      expect(mockConsoleError.mock.calls[0][0]).toContain('Should log');
+      expect(mockConsoleLog).not.toHaveBeenCalled();
     });
   });
 

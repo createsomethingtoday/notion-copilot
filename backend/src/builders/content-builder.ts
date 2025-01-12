@@ -94,10 +94,10 @@ export abstract class BlockBuilder<T extends NotionBlockContent & { object: 'blo
    * Sets the color of the block (if supported)
    */
   setColor(color: string): this {
-    const content = this.content as unknown as BlockContentMap;
-    const blockContent = content[this.content.type] || {};
-    blockContent.color = color;
-    content[this.content.type] = blockContent;
+    const blockContent = (this.content as unknown as BlockContentMap)[this.content.type];
+    if (blockContent) {
+      blockContent.color = color;
+    }
     return this;
   }
 
@@ -106,16 +106,20 @@ export abstract class BlockBuilder<T extends NotionBlockContent & { object: 'blo
   }
 
   build(): T {
-    // Build children if any
+    // Build child blocks first
     if (this.childBuilders.length > 0) {
-      const builtContent = this.content as T & { children?: NotionBlockContent[] };
-      builtContent.children = this.childBuilders.map(builder => builder.build());
+      const children = this.childBuilders.map(builder => builder.build());
+      const blockContent = (this.content as unknown as BlockContentMap)[this.content.type];
+      if (blockContent) {
+        blockContent.has_children = true;
+        blockContent.children = children;
+      }
     }
 
-    // Validate and return
-    const content = this.content as T;
-    this.validate(content);
-    return content;
+    // Validate the content
+    this.validate(this.content);
+
+    return this.content as T;
   }
 }
 

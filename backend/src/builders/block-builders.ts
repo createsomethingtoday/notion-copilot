@@ -298,6 +298,10 @@ export class TableBuilder extends BlockBuilder<NotionBlockContent & { type: 'tab
 
   addRow(cells: string[]): this {
     if (this.content.table) {
+      if (cells.length !== this.content.table.table_width) {
+        throw new Error(`Invalid number of cells: expected ${this.content.table.table_width}, got ${cells.length}`);
+      }
+
       const row = {
         type: 'table_row' as const,
         table_row: {

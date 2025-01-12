@@ -245,13 +245,12 @@ export interface NotionTableBlock extends NotionBaseBlock {
   };
 }
 
-export interface NotionTableOfContentsBlock {
+export interface NotionTableOfContentsBlock extends NotionBaseBlock {
   type: 'table_of_contents';
   table_of_contents: Record<string, never>;
 }
 
-export interface NotionTestBlock {
-  object: 'block';
+export interface NotionTestBlock extends NotionBaseBlock {
   type: 'test_block';
   test_block: {
     color?: string;

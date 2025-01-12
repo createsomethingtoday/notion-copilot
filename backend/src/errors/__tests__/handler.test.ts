@@ -39,7 +39,7 @@ describe('ErrorHandler', () => {
       const mockFn = jest.fn().mockRejectedValue(new Error('Test error'));
       const wrapped = errorHandler.wrap(mockFn);
 
-      await expect(wrapped()).rejects.toThrow(Error);
+      await expect(wrapped()).rejects.toThrow(NotionAssistantError);
       expect(mockFn).toHaveBeenCalledTimes(1);
     });
 

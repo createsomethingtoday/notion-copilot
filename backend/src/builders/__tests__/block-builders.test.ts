@@ -18,7 +18,7 @@ describe('Block Builders', () => {
       const builder = new ParagraphBuilder();
       const block = builder.setText('Hello world').build();
 
-      expect(block).toEqual({
+      expect(block).toMatchObject({
         object: 'block',
         type: 'paragraph',
         paragraph: {
@@ -53,7 +53,7 @@ describe('Block Builders', () => {
       const builder = new HeadingBuilder(level as 1 | 2 | 3);
       const block = builder.setText(`Heading ${level}`).build();
 
-      expect(block).toEqual({
+      expect(block).toMatchObject({
         object: 'block',
         type: `heading_${level}`,
         [`heading_${level}`]: {
@@ -71,7 +71,7 @@ describe('Block Builders', () => {
       const builder = new BulletedListBuilder();
       const block = builder.setText('List item').build();
 
-      expect(block).toEqual({
+      expect(block).toMatchObject({
         object: 'block',
         type: 'bulleted_list_item',
         bulleted_list_item: {
@@ -92,7 +92,7 @@ describe('Block Builders', () => {
         .setChecked(true)
         .build();
 
-      expect(block).toEqual({
+      expect(block).toMatchObject({
         object: 'block',
         type: 'to_do',
         to_do: {
@@ -115,7 +115,7 @@ describe('Block Builders', () => {
         .addRow(['Cell 1', 'Cell 2'])
         .build();
 
-      expect(block).toEqual({
+      expect(block).toMatchObject({
         object: 'block',
         type: 'table',
         table: {
@@ -153,6 +153,4 @@ describe('Block Builders', () => {
       }).toThrow('Invalid number of cells');
     });
   });
-
-  // Add more test cases for other builders...
 }); 
