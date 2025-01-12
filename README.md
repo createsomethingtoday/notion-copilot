@@ -2,9 +2,31 @@
 
 An intelligent assistant for Notion workspace management, powered by advanced task execution and NLP.
 
+## Current Status
+
+🟢 **Production Ready**
+- Task Queue System
+- Concurrency Management
+- Priority Management
+- Performance Monitoring
+- Basic Notion Integration
+
+🟡 **In Development**
+- Storage Layer (PostgreSQL)
+- Task Planning System
+- Frontend Interface
+
+🔴 **Planned**
+- AI/NLP Integration
+- Content Building System
+- Security Features
+- Testing Infrastructure
+
+For detailed status, see [CODE_STATUS.md](./CODE_STATUS.md)
+
 ## Features
 
-### Task Execution System
+### Core System
 - Priority-based task scheduling
 - Concurrent operation handling
 - Rate limiting and resource protection
@@ -12,11 +34,11 @@ An intelligent assistant for Notion workspace management, powered by advanced ta
 - Real-time performance monitoring
 
 ### Queue Management
-- Persistent task storage
+- Persistent task storage (in-memory, PostgreSQL coming soon)
 - Priority queue with deadlines
 - Dependency handling
 - Progress tracking
-- Batch operation support (coming soon)
+- Batch operation support (planned)
 
 ### Performance Monitoring
 - Real-time metrics collection
@@ -24,6 +46,82 @@ An intelligent assistant for Notion workspace management, powered by advanced ta
 - Resource usage tracking
 - Automatic alerting
 - Performance optimization
+
+## Getting Started
+
+### Prerequisites
+- Node.js 16+
+- TypeScript 4.5+
+- Notion API Key
+- OpenAI API Key (coming soon)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/notion-assistant.git
+cd notion-assistant
+```
+
+2. Install dependencies:
+```bash
+# Install backend dependencies
+cd backend
+npm install
+
+# Install frontend dependencies
+cd ../frontend
+npm install
+```
+
+3. Configure environment:
+```bash
+# Backend configuration
+cp backend/.env.example backend/.env
+# Edit backend/.env with your settings
+
+# Frontend configuration
+cp frontend/.env.example frontend/.env
+# Edit frontend/.env with your settings
+```
+
+### Running the Application
+
+1. Start the backend:
+```bash
+cd backend
+npm run dev
+```
+
+2. Start the frontend:
+```bash
+cd frontend
+npm run dev
+```
+
+## Development
+
+### Building
+```bash
+# Build backend
+cd backend
+npm run build
+
+# Build frontend
+cd frontend
+npm run build
+```
+
+### Testing
+```bash
+# Run backend tests
+cd backend
+npm test
+
+# Run frontend tests
+cd frontend
+npm test
+```
 
 ## Architecture
 
@@ -39,49 +137,18 @@ An intelligent assistant for Notion workspace management, powered by advanced ta
 - Observability: Full system visibility
 - Efficiency: Optimal resource utilization
 
-## Getting Started
+## Contributing
 
-### Prerequisites
-- Node.js 16+
-- TypeScript 4.5+
-- Notion API Key
-
-### Installation
-```bash
-npm install
-npm run build
-```
-
-### Configuration
-Create a `.env` file:
-```env
-NOTION_API_KEY=your_key_here
-MAX_CONCURRENT_TASKS=5
-RETRY_DELAY_MS=1000
-```
-
-### Running
-```bash
-npm start
-```
-
-## Development
-
-### Building
-```bash
-npm run build
-```
-
-### Testing
-```bash
-npm test
-```
-
-### Contributing
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## Roadmap
+
 See [NEXT_STEPS.md](./NEXT_STEPS.md) for planned features and improvements.
 
+## Known Issues
+
+See [CODE_STATUS.md](./CODE_STATUS.md) for current known issues and technical debt.
+
 ## License
+
 MIT 
