@@ -428,4 +428,41 @@ export class PostgresAdapter {
       errorRate: Number.parseFloat(results[2].rows[0].error_rate ?? '0')
     };
   }
+
+  /**
+   * Try to acquire an advisory lock
+   */
+  async tryAdvisoryLock(lockId: number): Promise<boolean> {
+    const result = await this.query<{ locked: boolean }>(
+      'SELECT pg_try_advisory_lock($1) as locked',
+      [lockId]
+    );
+    return result.rows[0]?.locked ?? false;
+  }
+
+  /**
+   * Release an advisory lock
+   */
+  async releaseAdvisoryLock(lockId: number): Promise<void> {
+    await this.query(
+      'SELECT pg_advisory_unlock($1)',
+      [lockId]
+    );
+  }
+
+  /**
+   * Check if an advisory lock is held
+   */
+  async checkAdvisoryLock(lockId: number): Promise<boolean> {
+    const result = await this.query<{ locked: boolean }>(
+      `SELECT EXISTS (
+        SELECT 1 FROM pg_locks 
+        WHERE locktype = 'advisory' 
+        AND objid = $1
+        AND granted = true
+      ) as locked`,
+      [lockId]
+    );
+    return result.rows[0]?.locked ?? false;
+  }
 } 
