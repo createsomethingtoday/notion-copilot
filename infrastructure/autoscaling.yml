@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Auto Scaling configuration for Notion Copilot Backend'
+
+Parameters:
+  EcsClusterName:
+    Type: String
+    Default: staging-cluster
+    Description: Name of the ECS cluster
+
+  EcsServiceName:
+    Type: String
+    Default: notion-copilot-backend
+    Description: Name of the ECS service
+
+  MinCapacity:
+    Type: Number
+    Default: 2
+    Description: Minimum number of tasks
+
+  MaxCapacity:
+    Type: Number
+    Default: 10
+    Description: Maximum number of tasks
+
+Resources:
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EcsClusterName}/${EcsServiceName}
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  # CPU-based target tracking
+  CpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: CpuTargetTracking
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  # Memory-based target tracking
+  MemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: MemoryTargetTracking
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: 70.0
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  # Request count based step scaling
+  RequestCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EcsServiceName}-HighRequestCount
+      AlarmDescription: Scale up when request count is high
+      MetricName: RequestCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  RequestCountScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: RequestCountStepScaling
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: ChangeInCapacity
+        Cooldown: 60
+        MetricAggregationType: Average
+        StepAdjustments:
+          - MetricIntervalLowerBound: 0
+            MetricIntervalUpperBound: 200
+            ScalingAdjustment: 1
+          - MetricIntervalLowerBound: 200
+            MetricIntervalUpperBound: 400
+            ScalingAdjustment: 2
+          - MetricIntervalLowerBound: 400
+            ScalingAdjustment: 3
+
+  # Error rate based scaling
+  ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EcsServiceName}-HighErrorRate
+      AlarmDescription: Scale up when error rate is high
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  ErrorRateScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ErrorRateStepScaling
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: ChangeInCapacity
+        Cooldown: 60
+        MetricAggregationType: Average
+        StepAdjustments:
+          - MetricIntervalLowerBound: 0
+            ScalingAdjustment: 1
+
+Outputs:
+  ServiceScalingTargetArn:
+    Description: ARN of the scaling target
+    Value: !Ref ServiceScalingTarget
+
+  CpuScalingPolicyArn:
+    Description: ARN of the CPU scaling policy
+    Value: !Ref CpuScalingPolicy
+
+  MemoryScalingPolicyArn:
+    Description: ARN of the Memory scaling policy
+    Value: !Ref MemoryScalingPolicy
+
+  RequestCountScalingPolicyArn:
+    Description: ARN of the Request Count scaling policy
+    Value: !Ref RequestCountScalingPolicy
+
+  ErrorRateScalingPolicyArn:
+    Description: ARN of the Error Rate scaling policy
+    Value: !Ref ErrorRateScalingPolicy 

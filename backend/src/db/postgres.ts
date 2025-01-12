@@ -3,6 +3,7 @@ import { Pool as PgPool } from 'pg';
 import type { DBTask, DBTaskResult, DBMetric } from './schema';
 import type { Task, TaskResult, TaskPriority, TaskStatus } from '../agent/types';
 import { Logger } from '../utils/logger';
+import { StorageAdapter } from '../storage/storage-adapter';
 
 // Helper type for database-safe objects
 type DatabaseObject = Record<string, unknown>;
@@ -14,7 +15,7 @@ export interface PostgresConfig extends PoolConfig {
   idleTimeoutMs?: number;
 }
 
-export class PostgresAdapter {
+export class PostgresAdapter implements StorageAdapter {
   private readonly pool: PgPool;
   private readonly logger: Logger;
 
@@ -464,5 +465,43 @@ export class PostgresAdapter {
       [lockId]
     );
     return result.rows[0]?.locked ?? false;
+  }
+
+  async getDeadLetterTasks(): Promise<Task[]> {
+    const result = await this.pool.query<TaskRow>(
+      'SELECT * FROM tasks WHERE status = $1',
+      ['dead_letter']
+    );
+    return result.rows.map(this.mapRowToTask);
+  }
+
+  async getDeadLetterTask(taskId: string): Promise<Task | null> {
+    const result = await this.pool.query<TaskRow>(
+      'SELECT * FROM tasks WHERE id = $1 AND status = $2',
+      [taskId, 'dead_letter']
+    );
+    return result.rows[0] ? this.mapRowToTask(result.rows[0]) : null;
+  }
+
+  async moveTaskToDeadLetter(task: Task): Promise<void> {
+    await this.pool.query(
+      'UPDATE tasks SET status = $1, error = $2, moved_to_dead_letter_at = $3, updated = $4 WHERE id = $5',
+      ['dead_letter', task.error?.message, task.movedToDeadLetterAt, task.updated, task.id]
+    );
+  }
+
+  async removeFromDeadLetter(taskId: string): Promise<void> {
+    await this.pool.query(
+      'DELETE FROM tasks WHERE id = $1 AND status = $2',
+      [taskId, 'dead_letter']
+    );
+  }
+
+  async cleanupDeadLetterTasks(threshold: Date): Promise<number> {
+    const result = await this.pool.query(
+      'DELETE FROM tasks WHERE status = $1 AND moved_to_dead_letter_at < $2 RETURNING id',
+      ['dead_letter', threshold]
+    );
+    return result.rowCount;
   }
 } 
