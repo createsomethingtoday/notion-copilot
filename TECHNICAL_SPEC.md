@@ -4,141 +4,93 @@
 
 ### Core Components
 
-#### 1. Authentication System
-- JWT-based authentication
-- Redis-backed rate limiting
-  - Login: 5 attempts/5min, 15min block
-  - Registration: 3 attempts/hour, 2hr block
-- IP-based blocking for security
-- Secure password hashing with bcrypt
-- Session management with Redis
+#### Task Processing System
+- **Task Queue**: Redis-backed distributed queue for task storage and processing
+- **Task Worker**: Processes tasks with priority scheduling and concurrent execution
+- **Dead Letter Queue**: Handles permanently failed tasks with:
+  - Configurable retention periods and max size
+  - Automatic cleanup job
+  - Retry mechanisms
+  - Monitoring metrics
+- **Circuit Breaker**: Protects external services from cascading failures
+- **Storage Layer**: PostgreSQL for persistent task and user data
 
-#### 2. Task Processing System
-- Priority-based task queue
-- Concurrent execution management
-- Progress tracking
-- Error recovery with retries
-- Dead letter queue for failed tasks
-- Task persistence in PostgreSQL
+#### Monitoring & Observability
+- **Metrics Collection**:
+  - System metrics (CPU, memory, event loop)
+  - Queue health (size, processing rate)
+  - API metrics (request rate, latency)
+  - Security events (rate limit violations)
+  - Circuit breaker states
+  - Dead letter queue metrics
+- **Metrics Storage**: Prometheus-compatible time series
+- **Visualization**: Grafana dashboards
+- **Alerting**: Webhook-based alerts (coming soon)
 
-#### 3. Monitoring Infrastructure
-- System metrics collection
-- Performance monitoring
-- Error tracking
-- Datadog integration
-- Health check endpoints
-- Metric batching and deduplication
+#### Security
+- **Authentication**:
+  - JWT-based token system
+  - Rate limiting for auth endpoints
+  - IP-based blocking
+- **Authorization**: Role-based access control (coming soon)
+- **API Security**:
+  - API key management
+  - Request validation
+  - Input sanitization
 
-#### 4. Data Storage
-- PostgreSQL for persistent data
-- Redis for caching and rate limiting
-- Transaction support
-- Connection pooling
-- Data migrations
+### Data Models
 
-### Security Architecture
-
-#### Authentication Flow
-```mermaid
-sequenceDiagram
-    participant Client
-    participant RateLimit
-    participant Auth
-    participant Redis
-    participant DB
-
-    Client->>RateLimit: Login Request
-    RateLimit->>Redis: Check Rate Limit
-    alt Limit Exceeded
-        Redis-->>RateLimit: Blocked
-        RateLimit-->>Client: 429 Too Many Requests
-    else Limit OK
-        RateLimit->>Auth: Process Login
-        Auth->>DB: Verify Credentials
-        DB-->>Auth: User Data
-        Auth->>Redis: Create Session
-        Auth-->>Client: JWT Token
-    end
-```
-
-#### Rate Limiting Implementation
+#### Task
 ```typescript
-interface RateLimitOptions {
-  points: number;        // Number of attempts allowed
-  duration: number;      // Time window in seconds
-  blockDuration: number; // Block duration in seconds
-  keyPrefix: string;     // Redis key prefix
+interface Task {
+  id: string;
+  type: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  description: string;
+  created: Date;
+  updated: Date;
+  completed_at?: Date;
+  deadline?: Date;
+  retry_count: number;
+  max_retries: number;
+  error?: NotionAssistantError;
+  result?: TaskResult;
+  metadata: Record<string, any>;
 }
 
-class RateLimiter {
-  constructor(
-    private redis: RedisClientType,
-    private monitoring: MonitoringService,
-    private options: RateLimitOptions
-  ) {}
+enum TaskStatus {
+  pending = 'pending',
+  running = 'running',
+  completed = 'completed',
+  failed = 'failed',
+  cancelled = 'cancelled',
+  dead_letter = 'dead_letter'
+}
 
-  async checkLimit(ip: string): Promise<boolean> {
-    const key = `${this.options.keyPrefix}:${ip}`;
-    const attempts = await this.redis.incr(key);
-    
-    if (attempts === 1) {
-      await this.redis.expire(key, this.options.duration);
-    }
-
-    if (attempts > this.options.points) {
-      await this.redis.expire(key, this.options.blockDuration);
-      this.monitoring.increment('rate_limit.blocked', { ip });
-      return false;
-    }
-
-    return true;
-  }
+enum TaskPriority {
+  LOW = 0,
+  MEDIUM = 1,
+  HIGH = 2,
+  CRITICAL = 3
 }
 ```
 
-### Monitoring Architecture
-
-#### Metric Collection
+#### Dead Letter Queue
 ```typescript
-interface MetricOptions {
-  tags?: Record<string, string>;
-  timestamp?: number;
-  interval?: number;
+interface DeadLetterQueueConfig {
+  maxSize: number;
+  retentionPeriodMs: number;
+  retryLimit: number;
+  backoffMs: number;
 }
 
-class MonitoringService {
-  private metrics: Map<string, MetricValue[]>;
-  private flushInterval: NodeJS.Timer;
-
-  constructor(options: {
-    provider: 'datadog' | 'console';
-    flushIntervalMs?: number;
-    batchSize?: number;
-    deduplicate?: boolean;
-  }) {
-    // Initialize monitoring
-  }
-
-  public increment(metric: string, options?: MetricOptions): void;
-  public gauge(metric: string, value: number, options?: MetricOptions): void;
-  public histogram(metric: string, value: number, options?: MetricOptions): void;
-}
-```
-
-#### Health Checks
-```typescript
-interface HealthStatus {
-  status: 'healthy' | 'degraded' | 'unhealthy';
-  checks: {
-    redis: boolean;
-    database: boolean;
-    monitoring: boolean;
-  };
-  metrics: {
-    uptime: number;
-    memoryUsage: number;
-    activeConnections: number;
-  };
+interface StorageAdapter {
+  getDeadLetterTasks(): Promise<Task[]>;
+  getDeadLetterTask(taskId: string): Promise<Task | null>;
+  moveTaskToDeadLetter(task: Task): Promise<void>;
+  removeFromDeadLetter(taskId: string): Promise<void>;
+  cleanupDeadLetterTasks(threshold: Date): Promise<number>;
 }
 ```
 
@@ -147,131 +99,94 @@ interface HealthStatus {
 #### Error Types
 ```typescript
 enum ErrorCode {
-  RATE_LIMITED = 'rate_limited',
   UNAUTHORIZED = 'unauthorized',
   INVALID_INPUT = 'invalid_input',
+  NOT_FOUND = 'not_found',
+  RATE_LIMIT_EXCEEDED = 'rate_limit_exceeded',
+  SERVICE_UNAVAILABLE = 'service_unavailable',
   INTERNAL_ERROR = 'internal_error',
-  SERVICE_UNAVAILABLE = 'service_unavailable'
+  NETWORK_ERROR = 'network_error',
+  VALIDATION_ERROR = 'validation_error',
+  TASK_EXECUTION_FAILED = 'task_execution_failed',
+  TASK_TIMEOUT = 'task_timeout',
+  TASK_CANCELLED = 'task_cancelled'
 }
 
-interface ErrorResponse {
-  code: ErrorCode;
-  message: string;
-  details?: Record<string, any>;
-  retryAfter?: number;
+interface ErrorRecoveryStrategy {
+  retryable: boolean;
+  requiresUserInput: boolean;
+  alternativeAction?: string;
+  cleanup?: () => Promise<void>;
 }
 ```
 
-#### Recovery Strategies
-1. Rate Limiting
-   - Exponential backoff
-   - Clear block after duration
-   - Monitoring alerts
+### Monitoring Metrics
 
-2. Service Failures
-   - Circuit breaker pattern
-   - Fallback mechanisms
-   - Graceful degradation
+#### System Metrics
+- `system_cpu_usage`: CPU usage percentage
+- `system_memory_usage`: Memory usage in bytes
+- `system_event_loop_lag`: Event loop lag in milliseconds
 
-### Performance Considerations
+#### Queue Metrics
+- `task_queue_size`: Number of tasks in queue
+- `task_processing_rate`: Tasks processed per minute
+- `task_error_rate`: Task failures per minute
+- `task_processing_duration`: Task processing time histogram
 
-#### Optimization Strategies
-1. Redis Operations
-   - Connection pooling
-   - Pipeline commands
-   - Key expiration
+#### Dead Letter Queue Metrics
+- `dlq_size`: Current size of dead letter queue
+- `dlq_tasks_cleaned`: Number of tasks cleaned up
+- `dlq_tasks_remaining`: Tasks remaining after cleanup
+- `dlq_cleanup_duration`: Cleanup operation duration
+- `dlq_cleanup_success`: Successful cleanup operations
+- `dlq_cleanup_failure`: Failed cleanup operations
 
-2. Monitoring
-   - Metric batching
-   - Deduplication
-   - Async flush
+#### Security Metrics
+- `rate_limit_exceeded`: Rate limit violation count
+- `auth_failures`: Authentication failure count
+- `circuit_breaker_trips`: Circuit breaker trip count
 
-3. Authentication
-   - Cache JWT verification
-   - Distributed rate limiting
-   - IP blocking cache
+### API Endpoints
 
-### Development Guidelines
+#### Task Management
+- `POST /api/tasks`: Create new task
+- `GET /api/tasks`: List tasks
+- `GET /api/tasks/:id`: Get task details
+- `DELETE /api/tasks/:id`: Cancel task
 
-#### Code Structure
-```
-src/
-├── middleware/
-│   ├── rate-limit.ts
-│   ├── auth.ts
-│   └── monitoring.ts
-├── monitoring/
-│   ├── service.ts
-│   └── providers/
-│       └── datadog.ts
-├── routes/
-│   └── auth.ts
-└── utils/
-    ├── redis.ts
-    └── errors.ts
-```
+#### Dead Letter Queue
+- `GET /api/dlq`: List dead letter tasks
+- `POST /api/dlq/:id/retry`: Retry dead letter task
+- `DELETE /api/dlq/:id`: Remove from dead letter queue
+- `POST /api/dlq/cleanup`: Trigger manual cleanup
 
-#### Testing Strategy
-1. Unit Tests
-   - Middleware functions
-   - Service methods
-   - Utility functions
+#### Monitoring
+- `GET /health`: Basic health check
+- `GET /metrics`: Prometheus metrics
+- `GET /health/redis`: Redis health
+- `GET /health/db`: Database health
 
-2. Integration Tests
-   - Rate limiting behavior
-   - Authentication flow
-   - Monitoring integration
+## Development Guidelines
 
-3. Load Tests
-   - Concurrent requests
-   - Rate limit effectiveness
-   - System performance
+### Testing Requirements
+1. Unit tests for all components
+2. Integration tests for API endpoints
+3. Performance tests for critical paths
+4. Error handling test cases
+5. Dead letter queue functionality tests
 
-### Deployment Architecture
+### Documentation Requirements
+1. API documentation with examples
+2. Architecture diagrams
+3. Deployment guides
+4. Troubleshooting guides
+5. Monitoring dashboards
 
-#### Environment Configuration
-```bash
-# Required
-REDIS_URL=redis://localhost:6379
-DATADOG_API_KEY=your_api_key
-JWT_SECRET=your_secret
+### Security Requirements
+1. Rate limiting for public endpoints
+2. Input validation
+3. API key management
+4. Error message sanitization
+5. Security headers
 
-# Optional
-METRICS_FLUSH_INTERVAL=10000
-METRICS_BATCH_SIZE=50
-RATE_LIMIT_POINTS=5
-RATE_LIMIT_DURATION=300
-```
-
-#### Health Monitoring
-1. System Metrics
-   - CPU usage
-   - Memory usage
-   - Event loop lag
-   - Active handles
-
-2. Application Metrics
-   - Request rate
-   - Error rate
-   - Response time
-   - Rate limit events
-
-### Future Considerations
-
-1. Security Enhancements
-   - OAuth integration
-   - 2FA support
-   - API key management
-   - Audit logging
-
-2. Performance Improvements
-   - Redis cluster
-   - Metric aggregation
-   - Request batching
-   - Cache optimization
-
-3. Monitoring Upgrades
-   - Custom dashboards
-   - Alert configuration
-   - Log aggregation
-   - Trace sampling 
+Last Updated: 2024-01-16 

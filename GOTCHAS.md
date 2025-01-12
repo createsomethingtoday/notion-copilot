@@ -1,175 +1,160 @@
-# Known Issues and Solutions
+# Common Issues and Solutions
 
-## Monitoring Issues
+## Task Processing
 
-### Datadog Authentication Failures
-**Symptoms:**
-- `NotionAssistantError: Datadog authentication failed`
-- Repeated metric flush failures
-- Unauthorized errors in logs
+### Dead Letter Queue Issues
 
-**Solutions:**
-1. Check environment variables:
+1. **Tasks Not Moving to Dead Letter Queue**
+   - Check that `max_retries` is set correctly on the task
+   - Verify the task's error is properly captured
+   - Ensure the storage adapter's `moveTaskToDeadLetter` method is working
+   - Check Redis connection and permissions
+
+2. **Dead Letter Queue Full**
+   - Increase `DLQ_MAX_SIZE` in configuration
+   - Run manual cleanup with `POST /api/dlq/cleanup`
+   - Consider reducing retention period
+   - Monitor `dlq_size` metric for trends
+
+3. **Cleanup Job Not Running**
+   - Verify `CLEANUP_INTERVAL` is set correctly
+   - Check worker logs for cleanup job status
+   - Ensure cleanup job has proper permissions
+   - Monitor `dlq_cleanup_success` and `dlq_cleanup_failure` metrics
+
+4. **Task Retry Issues**
+   - Check `backoffMs` configuration
+   - Verify task is eligible for retry
+   - Ensure original task data is preserved
+   - Monitor retry attempts in logs
+
+## Monitoring
+
+### Metric Collection Issues
+
+1. **Missing Metrics**
+   - Check monitoring service configuration
+   - Verify metric names and types
+   - Ensure proper initialization of providers
+   - Check for rate limiting or quota issues
+
+2. **High Memory Usage**
+   - Reduce metric batch size
+   - Increase flush interval
+   - Enable metric deduplication
+   - Monitor `system_memory_usage` metric
+
+3. **Metric Submission Failures**
+   - Check API key permissions
+   - Verify network connectivity
+   - Monitor circuit breaker status
+   - Check rate limits and quotas
+
+4. **Incorrect Metric Values**
+   - Verify metric type (gauge vs counter)
+   - Check for counter resets
+   - Ensure proper tagging
+   - Validate aggregation settings
+
+## Redis
+
+### Connection Issues
+
+1. **Redis Connection Failures**
+   - Check Redis URL format
+   - Verify network connectivity
+   - Ensure proper authentication
+   - Check Redis server logs
+
+2. **Redis Memory Issues**
+   - Monitor Redis memory usage
+   - Adjust key expiration policies
+   - Consider Redis cluster setup
+   - Clean up old keys regularly
+
+3. **Rate Limit Key Conflicts**
+   - Check key prefix configuration
+   - Verify key expiration timing
+   - Monitor key creation rate
+   - Consider key namespace changes
+
+## Performance
+
+### System Resource Issues
+
+1. **High CPU Usage**
+   - Monitor `system_cpu_usage` metric
+   - Check for long-running tasks
+   - Optimize task processing
+   - Consider scaling horizontally
+
+2. **Memory Leaks**
+   - Monitor `system_memory_usage` trend
+   - Check for unclosed connections
+   - Verify proper cleanup in workers
+   - Profile memory usage patterns
+
+3. **Event Loop Lag**
+   - Monitor `system_event_loop_lag`
+   - Identify blocking operations
+   - Use async operations properly
+   - Consider worker threads
+
+## Security
+
+### Rate Limiting Issues
+
+1. **Unexpected Blocking**
+   - Check rate limit configuration
+   - Verify IP detection logic
+   - Monitor rate limit metrics
+   - Review blocking duration
+
+2. **Rate Limit Bypass**
+   - Verify proxy configuration
+   - Check IP header parsing
+   - Monitor authentication failures
+   - Review security logs
+
+## Development
+
+### Common Code Issues
+
+1. **Type Errors**
+   - Use strict TypeScript checks
+   - Verify interface implementations
+   - Check for optional properties
+   - Review type assertions
+
+2. **Testing Failures**
+   - Mock external services
+   - Reset state between tests
+   - Use proper test timeouts
+   - Clean up test data
+
+## Quick Solutions
+
+### Emergency Actions
+
+1. **Reset Rate Limits**
    ```bash
-   # Required in .env
-   DATADOG_API_KEY=your_api_key
-   DATADOG_APP_KEY=your_app_key  # if using API endpoints
+   redis-cli KEYS "rate-limit:*" | xargs redis-cli DEL
    ```
 
-2. Verify API key validity:
+2. **Clear Dead Letter Queue**
    ```bash
-   curl -X GET "https://api.datadoghq.com/api/v1/validate" \
-   -H "Accept: application/json" \
-   -H "DD-API-KEY: ${DATADOG_API_KEY}"
+   curl -X POST /api/dlq/cleanup
    ```
 
-3. Development mode:
-   ```typescript
-   // Use development mode to prevent auth errors locally
-   const monitoring = new MonitoringService({
-     provider: process.env.NODE_ENV === 'production' ? 'datadog' : 'console'
-   });
-   ```
-
-### Metric Flooding
-**Symptoms:**
-- Large batches of duplicate metrics
-- Memory usage spikes
-- Frequent flush attempts
-
-**Solutions:**
-1. Adjust batch settings:
-   ```typescript
-   const monitoring = new MonitoringService({
-     flushIntervalMs: 10000,  // Increase interval
-     batchSize: 50,          // Reduce batch size
-     deduplicate: true       // Enable deduplication
-   });
-   ```
-
-2. Filter system metrics:
-   ```typescript
-   const monitoring = new MonitoringService({
-     systemMetrics: {
-       memoryUsage: true,
-       cpuUsage: true,
-       eventLoopLag: false,  // Disable noisy metrics
-       activeHandles: false
-     }
-   });
-   ```
-
-## Development Environment
-
-### Port Conflicts (EADDRINUSE)
-**Symptoms:**
-- `Error: listen EADDRINUSE: address already in use :::3001`
-- Server fails to start
-- Development server crashes
-
-**Solutions:**
-1. Find and kill existing process:
+3. **Reset Monitoring**
    ```bash
-   # Find process
-   lsof -i :3001
-   
-   # Kill process
-   kill -9 <PID>
+   pm2 restart monitoring
    ```
 
-2. Use dynamic port assignment:
-   ```typescript
-   // In src/index.ts
-   const PORT = process.env.PORT || findAvailablePort(3001, 3010);
-   ```
-
-3. Development script:
+4. **Check System Health**
    ```bash
-   # Add to package.json
-   "dev": "kill-port 3001 && ts-node-dev src/index.ts"
+   curl /health
+   curl /metrics
    ```
 
-### Redis Type Issues
-**Symptoms:**
-- `Module '"../server"' has no exported member 'redis'`
-- Type errors with Redis client
-- Missing type definitions
-
-**Solutions:**
-1. Proper Redis export:
-   ```typescript
-   // In src/server.ts
-   import { createClient } from 'redis';
-   import type { RedisClientType } from 'redis';
-   
-   export const redis: RedisClientType = createClient({
-     url: process.env.REDIS_URL
-   });
-   ```
-
-2. Type assertions:
-   ```typescript
-   // When strict typing is needed
-   import type { RedisClientType } from 'redis';
-   const typedRedis = redis as RedisClientType;
-   ```
-
-## Best Practices
-
-### Environment Configuration
-1. Use `.env.example`:
-   ```bash
-   # Required variables
-   REDIS_URL=redis://localhost:6379
-   DATADOG_API_KEY=
-   PORT=3001
-   ```
-
-2. Validate environment:
-   ```typescript
-   function validateEnv() {
-     const required = ['REDIS_URL', 'DATADOG_API_KEY'];
-     const missing = required.filter(key => !process.env[key]);
-     if (missing.length) {
-       throw new Error(`Missing required env vars: ${missing.join(', ')}`);
-     }
-   }
-   ```
-
-### Error Recovery
-1. Implement backoff for monitoring:
-   ```typescript
-   class MonitoringService {
-     private async flushWithBackoff(retries = 3) {
-       for (let i = 0; i < retries; i++) {
-         try {
-           await this.flush();
-           break;
-         } catch (error) {
-           if (i === retries - 1) throw error;
-           await sleep(Math.pow(2, i) * 1000);
-         }
-       }
-     }
-   }
-   ```
-
-2. Graceful degradation:
-   ```typescript
-   // Fall back to local storage if Redis fails
-   const storage = redis.isReady ? redis : new LocalStorage();
-   ```
-
-### Development Workflow
-1. Use consistent ports:
-   - Backend: 3001
-   - Frontend: 3000
-   - Redis: 6379
-   - Metrics: 9090
-
-2. Standard startup:
-   ```bash
-   # Start all services
-   docker-compose up -d redis
-   npm run dev
-   ``` 
+Last Updated: 2024-01-16 
