@@ -1,145 +1,127 @@
-import { EventEmitter } from 'node:events';
-import type { Task, TaskResult } from '../agent/types';
-import type { PostgresAdapter } from '../db/postgres';
-import { Logger } from '../utils/logger';
-import type { TaskExecutor } from './executor';
+import type { Logger } from '@/logger';
+import { getLogger } from '@/logger';
+import type { Task } from './types';
+import { TaskStatus } from './types';
+import type { StorageAdapter } from '../storage/adapter';
+import { DeadLetterQueue } from './dead-letter-queue';
+import type { DeadLetterQueueConfig } from './types';
+import { NotionAssistantError } from '@/errors/types';
+import { ErrorCode, ErrorSeverity } from '@/errors/types';
+import { CleanupJob } from './cleanup-job';
+import type { MonitoringService } from '@/monitoring/service';
 
 export interface WorkerConfig {
-  id: string;
-  maxRetries?: number;
-  retryDelayMs?: number;
-  taskTimeoutMs?: number;
+  pollIntervalMs: number;
+  maxConcurrent: number;
+  deadLetterConfig: DeadLetterQueueConfig;
+  cleanupIntervalMs: number;
 }
 
-export class Worker extends EventEmitter {
-  private readonly id: string;
+export class Worker {
   private readonly logger: Logger;
-  private readonly db: PostgresAdapter;
-  private readonly executor: TaskExecutor;
-  private currentTask?: Task;
+  private readonly deadLetterQueue: DeadLetterQueue;
+  private readonly cleanupJob: CleanupJob;
   private isRunning = false;
-  private readonly maxRetries: number;
-  private readonly retryDelayMs: number;
-  private readonly taskTimeoutMs: number;
+  private activeTaskCount = 0;
 
-  constructor(db: PostgresAdapter, executor: TaskExecutor, config: WorkerConfig) {
-    super();
-    this.id = config.id;
-    this.db = db;
-    this.executor = executor;
-    this.logger = new Logger(`Worker:${this.id}`);
-    this.maxRetries = config.maxRetries ?? 3;
-    this.retryDelayMs = config.retryDelayMs ?? 5000;
-    this.taskTimeoutMs = config.taskTimeoutMs ?? 30000;
+  constructor(
+    private readonly storage: StorageAdapter,
+    private readonly config: WorkerConfig,
+    private readonly monitoring: MonitoringService
+  ) {
+    this.logger = getLogger('Worker');
+    this.deadLetterQueue = new DeadLetterQueue(storage, config.deadLetterConfig);
+    this.cleanupJob = new CleanupJob(this.deadLetterQueue, {
+      intervalMs: config.cleanupIntervalMs
+    }, monitoring);
   }
 
-  /**
-   * Start the worker
-   */
-  async start(): Promise<void> {
-    if (this.isRunning) return;
+  public async start(): Promise<void> {
+    if (this.isRunning) {
+      return;
+    }
+
     this.isRunning = true;
     this.logger.info('Worker started');
-    this.emit('started');
-    await this.processNextTask();
-  }
+    this.cleanupJob.start();
 
-  /**
-   * Stop the worker
-   */
-  async stop(): Promise<void> {
-    if (!this.isRunning) return;
-    this.isRunning = false;
-    this.logger.info('Worker stopped');
-    this.emit('stopped');
-  }
-
-  /**
-   * Process the next task in the queue
-   */
-  private async processNextTask(): Promise<void> {
     while (this.isRunning) {
       try {
-        // Get next task from queue
-        const task = await this.db.getNextTask();
-        if (!task) {
-          // No tasks available, wait before checking again
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-
-        this.currentTask = task;
-        this.logger.info(`Processing task: ${task.id}`, { type: task.type });
-        this.emit('taskStarted', task);
-
-        // Update task status
-        await this.db.updateTask(task.id, {
-          status: 'in_progress',
-          updated: new Date()
-        });
-
-        // Execute task with timeout
-        const result = await Promise.race([
-          this.executor.executeTask(task),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('Task timeout')), this.taskTimeoutMs);
-          })
-        ]);
-
-        // Save result
-        await this.db.updateTask(task.id, {
-          status: 'completed',
-          result,
-          completedAt: new Date(),
-          updated: new Date()
-        });
-
-        this.logger.info(`Task completed: ${task.id}`);
-        this.emit('taskCompleted', task, result);
-
-      } catch (error) {
-        if (this.currentTask) {
-          const retryCount = (this.currentTask.retryCount ?? 0) + 1;
-          const shouldRetry = retryCount <= this.maxRetries;
-
-          await this.db.updateTask(this.currentTask.id, {
-            status: shouldRetry ? 'pending' : 'failed',
-            error: error as Error,
-            retryCount,
-            updated: new Date()
+        if (this.activeTaskCount < this.config.maxConcurrent) {
+          const tasks = await this.storage.getTasks({
+            status: [TaskStatus.PENDING],
+            limit: this.config.maxConcurrent - this.activeTaskCount
           });
 
-          this.logger.error(
-            `Task ${shouldRetry ? 'failed, will retry' : 'failed permanently'}: ${this.currentTask.id}`,
-            error as Error
-          );
-          this.emit('taskFailed', this.currentTask, error);
-
-          if (shouldRetry) {
-            // Wait before retrying
-            await new Promise(resolve => setTimeout(resolve, this.retryDelayMs));
+          for (const task of tasks) {
+            this.processTask(task).catch(error => {
+              this.logger.error('Failed to process task', error as Error, {
+                taskId: task.id
+              });
+            });
           }
         }
-      } finally {
-        this.currentTask = undefined;
+
+        await new Promise(resolve => setTimeout(resolve, this.config.pollIntervalMs));
+      } catch (error) {
+        this.logger.error('Worker loop error', error as Error);
+        await new Promise(resolve => setTimeout(resolve, this.config.pollIntervalMs));
       }
     }
   }
 
-  /**
-   * Get worker status
-   */
-  getStatus(): {
-    id: string;
-    isRunning: boolean;
-    currentTask?: { id: string; type: string };
-  } {
-    return {
-      id: this.id,
-      isRunning: this.isRunning,
-      currentTask: this.currentTask
-        ? { id: this.currentTask.id, type: this.currentTask.type }
-        : undefined
-    };
+  public stop(): void {
+    this.isRunning = false;
+    this.cleanupJob.stop();
+    this.logger.info('Worker stopped');
+  }
+
+  private async processTask(task: Task): Promise<void> {
+    this.activeTaskCount++;
+
+    try {
+      task.status = TaskStatus.RUNNING;
+      task.updated = new Date();
+      await this.storage.updateTask(task);
+
+      // Mock task execution
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      task.status = TaskStatus.COMPLETED;
+      task.completed_at = new Date();
+      task.updated = new Date();
+      await this.storage.updateTask(task);
+
+      this.logger.info('Task completed successfully', {
+        taskId: task.id,
+        type: task.type
+      });
+    } catch (error) {
+      task.status = TaskStatus.FAILED;
+      task.error = error instanceof NotionAssistantError ? error : new NotionAssistantError(
+        'Task execution failed',
+        ErrorCode.TASK_EXECUTION_FAILED,
+        ErrorSeverity.ERROR,
+        true,
+        { error }
+      );
+      task.updated = new Date();
+      task.retry_count++;
+
+      if (task.retry_count >= task.max_retries) {
+        await this.deadLetterQueue.moveToDeadLetter(task);
+      } else {
+        await this.storage.updateTask(task);
+      }
+
+      this.logger.error('Task failed', task.error, {
+        taskId: task.id,
+        type: task.type,
+        retryCount: task.retry_count,
+        maxRetries: task.max_retries
+      });
+    } finally {
+      this.activeTaskCount--;
+    }
   }
 } 
