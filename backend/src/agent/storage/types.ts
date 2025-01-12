@@ -60,4 +60,29 @@ export interface StorageAdapter {
    * Check if storage is healthy
    */
   isHealthy(): Promise<boolean>;
+
+  /**
+   * Get dead letter tasks
+   */
+  getDeadLetterTasks(): Promise<Task[]>;
+
+  /**
+   * Get a dead letter task by ID
+   */
+  getDeadLetterTask(taskId: string): Promise<Task | null>;
+
+  /**
+   * Move a task to the dead letter queue
+   */
+  moveTaskToDeadLetter(task: Task): Promise<void>;
+
+  /**
+   * Remove a task from the dead letter queue
+   */
+  removeFromDeadLetter(taskId: string): Promise<void>;
+
+  /**
+   * Clean up old dead letter tasks
+   */
+  cleanupDeadLetterTasks(threshold: Date): Promise<number>;
 } 

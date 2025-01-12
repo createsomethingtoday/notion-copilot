@@ -10,7 +10,7 @@ import type {
 } from '@notionhq/client/build/src/api-endpoints';
 
 export type TaskType = 'search' | 'read' | 'write' | 'update' | 'delete';
-export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'dead_letter';
 export type TaskPriority = '0' | '1' | '2' | '3'; // LOW to URGENT
 
 export type NotionObjectType = 'page' | 'database' | 'block';
@@ -25,16 +25,16 @@ export interface BaseTask {
   id: string;
   type: TaskType;
   status: TaskStatus;
-  priority: TaskPriority;
+  priority?: TaskPriority;
   description?: string;
-  dependencies?: string[];
   created?: Date;
   updated?: Date;
   completedAt?: Date;
+  deadline?: Date;
   retryCount?: number;
   error?: Error;
-  weight?: number;
-  deadline?: Date;
+  movedToDeadLetterAt?: Date;
+  result?: TaskResult;
 }
 
 export interface SearchTask extends BaseTask {

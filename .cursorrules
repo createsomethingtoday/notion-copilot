@@ -1,0 +1,56 @@
+# Rules for AI Interactions
+
+## Project Context
+This is a Notion Assistant project that helps users manage and interact with their Notion workspace. The project includes:
+- Task execution system with priority-based scheduling
+- Advanced monitoring and error handling
+- Security features including rate limiting
+- PostgreSQL and Redis integration
+- Comprehensive test infrastructure
+
+## Code Style & Standards
+1. Use TypeScript with strict type checking
+2. Follow SOLID principles and clean code practices
+3. Implement comprehensive error handling
+4. Include detailed JSDoc comments
+5. Write unit tests for new functionality
+6. Use meaningful variable and function names
+
+## Development Workflow
+1. Before making changes:
+   - Review existing code structure
+   - Check for similar implementations
+   - Consider impact on existing features
+2. When implementing changes:
+   - Start with type definitions
+   - Add necessary tests
+   - Implement the feature
+   - Update documentation
+3. After changes:
+   - Fix all linter errors
+   - Ensure tests pass
+   - Update relevant documentation
+
+## Error Handling
+1. Use the NotionAssistantError class for all errors
+2. Include appropriate error codes and severity levels
+3. Implement proper error recovery strategies
+4. Add error monitoring and logging
+
+## Security Considerations
+1. Implement rate limiting for public endpoints
+2. Use proper authentication and authorization
+3. Validate all user inputs
+4. Follow security best practices for API keys and secrets
+
+## Documentation Requirements
+1. Keep NEXT_STEPS.md updated with current priorities
+2. Document all new features and changes
+3. Include examples in documentation
+4. Update troubleshooting guides when adding features
+
+## Testing Requirements
+1. Write unit tests for new functionality
+2. Include integration tests for API endpoints
+3. Add performance tests for critical paths
+4. Test error handling and edge cases 

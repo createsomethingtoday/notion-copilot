@@ -4,6 +4,7 @@ import type { StorageAdapter } from './types';
 export class InMemoryStorage implements StorageAdapter {
   private tasks: Map<string, Task> = new Map();
   private results: Map<string, TaskResult> = new Map();
+  private deadLetterTasks: Map<string, Task> = new Map();
   private isInitialized = true;
 
   async saveTask(task: Task): Promise<void> {
@@ -80,5 +81,33 @@ export class InMemoryStorage implements StorageAdapter {
 
   async isHealthy(): Promise<boolean> {
     return this.isInitialized;
+  }
+
+  async getDeadLetterTasks(): Promise<Task[]> {
+    return Array.from(this.deadLetterTasks.values());
+  }
+
+  async getDeadLetterTask(taskId: string): Promise<Task | null> {
+    return this.deadLetterTasks.get(taskId) || null;
+  }
+
+  async moveTaskToDeadLetter(task: Task): Promise<void> {
+    this.deadLetterTasks.set(task.id, task);
+    this.tasks.delete(task.id);
+  }
+
+  async removeFromDeadLetter(taskId: string): Promise<void> {
+    this.deadLetterTasks.delete(taskId);
+  }
+
+  async cleanupDeadLetterTasks(threshold: Date): Promise<number> {
+    let removedCount = 0;
+    for (const [taskId, task] of this.deadLetterTasks.entries()) {
+      if (task.movedToDeadLetterAt && task.movedToDeadLetterAt < threshold) {
+        this.deadLetterTasks.delete(taskId);
+        removedCount++;
+      }
+    }
+    return removedCount;
   }
 } 

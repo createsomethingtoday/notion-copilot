@@ -1,0 +1,39 @@
+{{ define "slack.default.title" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
+{{ end }}
+
+{{ define "slack.default.text" }}
+{{ if gt (len .Alerts.Firing) 0 }}
+*Alerts Firing:*
+{{ range .Alerts.Firing }}
+• *Instance:* {{ .Labels.instance }}
+• *Summary:* {{ .Annotations.summary }}
+• *Description:* {{ .Annotations.description }}
+• *Started:* {{ .StartsAt | since }}
+{{ if .Labels.severity }}• *Severity:* {{ .Labels.severity | toUpper }}{{ end }}
+{{ if .Labels.job }}• *Service:* {{ .Labels.job }}{{ end }}
+---
+{{ end }}
+{{ end }}
+
+{{ if gt (len .Alerts.Resolved) 0 }}
+*Alerts Resolved:*
+{{ range .Alerts.Resolved }}
+• *Instance:* {{ .Labels.instance }}
+• *Summary:* {{ .Annotations.summary }}
+• *Resolved:* {{ .EndsAt | since }}
+{{ if .Labels.severity }}• *Severity:* {{ .Labels.severity | toUpper }}{{ end }}
+{{ if .Labels.job }}• *Service:* {{ .Labels.job }}{{ end }}
+---
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{ define "slack.default.footer" }}
+{{ if gt (len .Alerts.Firing) 0 }}
+{{ range .Alerts.Firing }}
+{{ if .GeneratorURL }}*Prometheus:* {{ .GeneratorURL }}{{ end }}
+{{ if .SilenceURL }}*Silence:* {{ .SilenceURL }}{{ end }}
+{{ end }}
+{{ end }}
+{{ end }} 

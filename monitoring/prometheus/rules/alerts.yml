@@ -1,0 +1,89 @@
+groups:
+  - name: node_alerts
+    rules:
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / process_heap_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High memory usage on {{ $labels.instance }}
+          description: Memory usage is above 85% for 5 minutes
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High CPU usage on {{ $labels.instance }}
+          description: CPU usage is above 80% for 5 minutes
+
+  - name: api_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_request_errors_total[5m]) / rate(http_requests_total[5m]) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: High API error rate
+          description: Error rate is above 5% for 2 minutes
+
+      - alert: SlowResponses
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Slow API responses
+          description: 95th percentile of response times is above 500ms for 5 minutes
+
+  - name: service_alerts
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Service {{ $labels.job }} is down
+          description: Service has been down for more than 1 minute
+
+      - alert: HighRedisMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High Redis memory usage
+          description: Redis memory usage is above 80% for 5 minutes
+
+      - alert: DatabaseConnections
+        expr: mongodb_connections_current / mongodb_connections_available * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High MongoDB connection usage
+          description: MongoDB connection usage is above 80% for 5 minutes
+
+  - name: business_alerts
+    rules:
+      - alert: HighTaskQueueLatency
+        expr: task_queue_latency_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High task queue latency
+          description: Tasks are taking more than 30 seconds to process
+
+      - alert: HighNotionAPIErrors
+        expr: rate(notion_api_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High Notion API error rate
+          description: Notion API errors are occurring frequently 
