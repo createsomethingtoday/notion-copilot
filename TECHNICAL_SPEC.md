@@ -189,4 +189,181 @@ interface ErrorRecoveryStrategy {
 4. Error message sanitization
 5. Security headers
 
+## Audit Logging System
+
+### Overview
+The audit logging system provides comprehensive event tracking and compliance monitoring across the entire application. It captures system events, security events, task events, and performance events with structured metadata and correlation capabilities.
+
+### Components
+
+1. Core Types
+- AuditEventType: Categorized event types (system, task, security, recovery, performance, data, integration)
+- AuditEventSeverity: Event severity levels (debug, info, warning, error, critical)
+- AuditEventMetadata: Structured metadata for events
+- AuditEvent: Complete event record with correlation support
+
+2. Storage Layer
+- PostgreSQL-based storage with JSONB metadata
+- Optimized indexes for common queries
+- Transaction support
+- Correlation tracking
+- Parent-child relationships
+
+3. Service Layer
+- Event batching and buffering
+- Configurable retention policies
+- Automatic cleanup
+- Graceful shutdown
+- Correlation tracking
+- Error handling
+
+### Features
+
+1. Event Categories
+- System Events: startup, shutdown, errors, recovery
+- Task Events: creation, updates, completion, failures
+- Security Events: authentication, authorization, rate limiting
+- Recovery Events: circuit breaker states, recovery attempts
+- Performance Events: degradation, resource exhaustion
+- Data Events: backup, restore, corruption
+- Integration Events: API errors and recovery
+
+2. Performance Optimizations
+- Event batching
+- Efficient indexing
+- Metadata querying
+- Retention management
+- Cleanup automation
+
+3. Compliance Support
+- Structured event logging
+- Event correlation
+- Audit trails
+- Security event tracking
+- Data lifecycle management
+
+4. Integration Points
+- Task execution system
+- Recovery mechanisms
+- Security system
+- Monitoring system
+- Data management
+
+### Schema Design
+
+1. Audit Events Table
+```sql
+CREATE TABLE audit_events (
+  id uuid PRIMARY KEY,
+  type audit_event_type NOT NULL,
+  severity audit_event_severity NOT NULL,
+  timestamp timestamptz NOT NULL,
+  message text NOT NULL,
+  metadata jsonb NOT NULL DEFAULT '{}',
+  correlation_id uuid,
+  parent_event_id uuid REFERENCES audit_events ON DELETE SET NULL
+);
+```
+
+2. Indexes
+- Timestamp-based queries
+- Event type filtering
+- Severity filtering
+- Correlation lookups
+- Metadata field queries (userId, taskId, resourceId)
+
+### Usage Examples
+
+1. Task Event Tracking
+```typescript
+await auditService.createEvent(
+  AuditEventType.TASK_CREATED,
+  'New task created',
+  {
+    taskId: '123',
+    userId: 'user-456',
+    priority: 'high'
+  }
+);
+```
+
+2. Security Event Logging
+```typescript
+await auditService.createEvent(
+  AuditEventType.AUTH_FAILED,
+  'Authentication failed',
+  {
+    userId: 'user-789',
+    ipAddress: '192.168.1.1',
+    reason: 'Invalid credentials'
+  },
+  { severity: AuditEventSeverity.WARNING }
+);
+```
+
+3. Correlated Events
+```typescript
+const correlationId = 'correlation-123';
+await auditService.createEvent(
+  AuditEventType.DATA_BACKUP_STARTED,
+  'Starting database backup',
+  { backupId: 'backup-456' },
+  { correlationId }
+);
+
+await auditService.createEvent(
+  AuditEventType.DATA_BACKUP_COMPLETED,
+  'Database backup completed',
+  { backupId: 'backup-456', size: '1.2GB' },
+  { correlationId }
+);
+```
+
+### Best Practices
+
+1. Event Creation
+- Use appropriate event types and severities
+- Include relevant metadata
+- Set correlation IDs for related events
+- Use immediate flag for critical events
+
+2. Querying
+- Use specific filters to reduce result sets
+- Include date ranges for large queries
+- Use correlation IDs to track related events
+- Consider pagination for large result sets
+
+3. Maintenance
+- Monitor storage usage
+- Adjust retention policies as needed
+- Archive important events before cleanup
+- Monitor cleanup job performance
+
+4. Security
+- Sanitize sensitive data in metadata
+- Control access to audit logs
+- Monitor security events
+- Implement retention policies
+
+### Future Enhancements
+
+1. Storage
+- Elasticsearch integration for advanced search
+- Event archival to cold storage
+- Compression for old events
+- Sharding for large datasets
+
+2. Features
+- Real-time event streaming
+- Advanced analytics
+- Machine learning for anomaly detection
+- Custom event types
+- Event aggregation
+
+3. Integration
+- Webhook notifications
+- External logging systems
+- Compliance reporting
+- Audit dashboards
+
 Last Updated: 2024-01-16 

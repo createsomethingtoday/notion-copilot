@@ -1,24 +1,27 @@
-import type { MetricProvider, MetricValue } from './types';
-import { DatadogProvider } from './providers/datadog';
-import { getLogger } from '../logger';
-import { NotionAssistantError, ErrorCode, ErrorSeverity } from '../errors/types';
 import { CircuitBreaker } from '../utils/circuit-breaker';
-import type { Logger } from '@/logger';
+import { Logger } from '../utils/logger';
+import { NotionAssistantError, ErrorCode, ErrorSeverity } from '../errors/types';
+import type { MetricProvider, MetricValue } from './providers/types';
+import { ConsoleProvider } from './providers/console';
+import { DatadogProvider } from './providers/datadog';
 
-const logger = getLogger('MonitoringService');
+export interface SystemMetricsOptions {
+  memoryUsage?: boolean;
+  cpuUsage?: boolean;
+  eventLoopLag?: boolean;
+  activeHandles?: boolean;
+}
 
-interface MonitoringOptions {
-  provider: 'datadog' | 'console';
-  apiKey: string;
+export interface MonitoringOptions {
+  provider: 'console' | 'datadog';
+  apiKey?: string;
   flushIntervalMs?: number;
   batchSize?: number;
   deduplicate?: boolean;
-  systemMetrics?: {
-    memoryUsage?: boolean;
-    cpuUsage?: boolean;
-    eventLoopLag?: boolean;
-    activeHandles?: boolean;
-  };
+  systemMetrics?: SystemMetricsOptions;
+  maxRetries?: number;
+  retryDelayMs?: number;
+  healthCheckIntervalMs?: number;
 }
 
 export class MonitoringService {
@@ -28,13 +31,21 @@ export class MonitoringService {
   private readonly circuitBreaker: CircuitBreaker;
   private readonly options: Required<MonitoringOptions>;
   private readonly logger: Logger;
+  private healthCheckInterval?: NodeJS.Timeout;
+  private lastFlushTime?: number;
+  private consecutiveFailures = 0;
+  private isRecovering = false;
 
   constructor(options: MonitoringOptions) {
     this.options = {
-      ...options,
+      provider: options.provider,
+      apiKey: options.apiKey ?? '',
       flushIntervalMs: options.flushIntervalMs ?? 10000,
       batchSize: options.batchSize ?? 100,
       deduplicate: options.deduplicate ?? true,
+      maxRetries: options.maxRetries ?? 3,
+      retryDelayMs: options.retryDelayMs ?? 1000,
+      healthCheckIntervalMs: options.healthCheckIntervalMs ?? 30000,
       systemMetrics: {
         memoryUsage: options.systemMetrics?.memoryUsage ?? true,
         cpuUsage: options.systemMetrics?.cpuUsage ?? true,
@@ -43,164 +54,182 @@ export class MonitoringService {
       }
     };
 
+    this.logger = new Logger('MonitoringService');
     this.provider = this.createProvider(this.options);
+    
     this.circuitBreaker = new CircuitBreaker('monitoring', {
       maxFailures: 3,
       resetTimeoutMs: 60000,
       halfOpenMaxAttempts: 2,
-      monitorIntervalMs: 30000
-    }, logger);
+      monitorIntervalMs: this.options.healthCheckIntervalMs
+    }, this.logger);
 
     this.flushInterval = setInterval(() => {
-      this.flush().catch(error => {
-        logger.error({
-          message: 'Failed to flush metrics',
-          context: { error }
-        });
+      this.flush().catch(err => {
+        this.logger.error('Failed to flush metrics', { errorMessage: err instanceof Error ? err.message : String(err) });
       });
     }, this.options.flushIntervalMs);
 
-    this.logger = getLogger('MonitoringService');
-
-    if (this.options.systemMetrics.memoryUsage) {
-      this.startMemoryMetrics();
-    }
-    if (this.options.systemMetrics.cpuUsage) {
-      this.startCpuMetrics();
-    }
-    if (this.options.systemMetrics.eventLoopLag) {
-      this.startEventLoopMetrics();
-    }
-    if (this.options.systemMetrics.activeHandles) {
-      this.startHandleMetrics();
-    }
+    this.startHealthCheck();
+    this.startSystemMetrics();
   }
 
-  private createProvider(options: MonitoringOptions): MetricProvider {
-    if (options.provider === 'datadog') {
-      if (!options.apiKey) {
+  private createProvider(options: Required<MonitoringOptions>): MetricProvider {
+    switch (options.provider) {
+      case 'datadog':
+        if (!options.apiKey) {
+          throw new NotionAssistantError(
+            'Datadog API key is required',
+            ErrorCode.CONFIGURATION_ERROR,
+            ErrorSeverity.ERROR,
+            false
+          );
+        }
+        return new DatadogProvider(options.apiKey);
+      case 'console':
+        return new ConsoleProvider();
+      default:
         throw new NotionAssistantError(
-          'Datadog API key is required',
-          ErrorCode.INVALID_INPUT,
+          `Unknown monitoring provider: ${options.provider}`,
+          ErrorCode.CONFIGURATION_ERROR,
           ErrorSeverity.ERROR,
           false
         );
-      }
-      return new DatadogProvider(options.apiKey);
     }
-    return {
-      sendMetrics: async (metrics: MetricValue[]) => {
-        logger.debug({
-          message: 'Console metrics provider',
-          context: { metrics }
+  }
+
+  private startHealthCheck(): void {
+    if (this.healthCheckInterval) return;
+
+    this.healthCheckInterval = setInterval(() => {
+      this.performHealthCheck().catch(err => {
+        this.logger.error('Health check failed', { errorMessage: err instanceof Error ? err.message : String(err) });
+      });
+    }, this.options.healthCheckIntervalMs);
+  }
+
+  private async performHealthCheck(): Promise<void> {
+    // Check last flush time
+    if (this.lastFlushTime) {
+      const timeSinceLastFlush = Date.now() - this.lastFlushTime;
+      if (timeSinceLastFlush > this.options.flushIntervalMs * 2) {
+        this.logger.warn('Metrics flush delayed', { timeSinceLastFlush });
+        await this.attemptRecovery();
+      }
+    }
+
+    // Check circuit breaker state
+    const circuitBreakerState = (this.circuitBreaker as unknown as { state: string }).state;
+    if (circuitBreakerState === 'open') {
+      this.logger.warn('Circuit breaker is open, attempting recovery');
+      await this.attemptRecovery();
+    }
+  }
+
+  private async attemptRecovery(): Promise<void> {
+    if (this.isRecovering) return;
+    this.isRecovering = true;
+
+    try {
+      // Reset provider connection
+      if ('reset' in this.provider && typeof this.provider.reset === 'function') {
+        await this.provider.reset();
+      }
+
+      // Attempt to flush metrics
+      await this.flush();
+      
+      this.consecutiveFailures = 0;
+      this.logger.info('Monitoring service recovered successfully');
+    } catch (err) {
+      this.consecutiveFailures++;
+      this.logger.error('Recovery attempt failed', { 
+        errorMessage: err instanceof Error ? err.message : String(err),
+        consecutiveFailures: this.consecutiveFailures 
+      });
+
+      if (this.consecutiveFailures >= this.options.maxRetries) {
+        this.logger.error('Max recovery attempts reached');
+      }
+    } finally {
+      this.isRecovering = false;
+    }
+  }
+
+  private startSystemMetrics(): void {
+    if (this.options.systemMetrics.memoryUsage) {
+      setInterval(() => {
+        const usage = process.memoryUsage();
+        this.gauge('memory.heap_used', usage.heapUsed);
+        this.gauge('memory.heap_total', usage.heapTotal);
+        this.gauge('memory.rss', usage.rss);
+      }, 30000);
+    }
+
+    if (this.options.systemMetrics.cpuUsage) {
+      let lastCpuUsage = process.cpuUsage();
+      setInterval(() => {
+        const usage = process.cpuUsage(lastCpuUsage);
+        this.gauge('cpu.user', usage.user);
+        this.gauge('cpu.system', usage.system);
+        lastCpuUsage = process.cpuUsage();
+      }, 30000);
+    }
+
+    if (this.options.systemMetrics.eventLoopLag) {
+      setInterval(() => {
+        const start = Date.now();
+        setImmediate(() => {
+          const lag = Date.now() - start;
+          this.gauge('eventloop.lag', lag);
         });
-      }
-    };
+      }, 30000);
+    }
+
+    if (this.options.systemMetrics.activeHandles) {
+      setInterval(() => {
+        const handles = process._getActiveHandles();
+        if (handles) {
+          this.gauge('handles.active', handles.length);
+        }
+      }, 30000);
+    }
   }
 
-  private startMemoryMetrics(): void {
-    setInterval(() => {
-      const usage = process.memoryUsage();
-      this.gauge('system_memory_usage', usage.heapUsed / 1024 / 1024, {
-        type: 'heap'
-      });
-      this.gauge('system_memory_usage', usage.heapTotal / 1024 / 1024, {
-        type: 'heap_total'
-      });
-      this.gauge('system_memory_usage', usage.rss / 1024 / 1024, {
-        type: 'rss'
-      });
-    }, 1000);
+  public gauge(name: string, value: number, tags?: Record<string, string>): void {
+    this.recordMetric({
+      name,
+      value,
+      type: 'gauge',
+      timestamp: Date.now(),
+      tags
+    });
   }
 
-  private startCpuMetrics(): void {
-    let lastCpuUsage = process.cpuUsage();
-    let lastHrTime = process.hrtime();
-
-    setInterval(() => {
-      const currentCpuUsage = process.cpuUsage();
-      const currentHrTime = process.hrtime();
-
-      const elapsedUser = currentCpuUsage.user - lastCpuUsage.user;
-      const elapsedSystem = currentCpuUsage.system - lastCpuUsage.system;
-      const elapsedHrTime = process.hrtime(lastHrTime);
-      const elapsedNanos = elapsedHrTime[0] * 1e9 + elapsedHrTime[1];
-
-      const userPercent = (elapsedUser / elapsedNanos) * 100;
-      const systemPercent = (elapsedSystem / elapsedNanos) * 100;
-
-      this.gauge('system_cpu_usage', userPercent, { type: 'user' });
-      this.gauge('system_cpu_usage', systemPercent, { type: 'system' });
-
-      lastCpuUsage = currentCpuUsage;
-      lastHrTime = currentHrTime;
-    }, 1000);
-  }
-
-  private startEventLoopMetrics(): void {
-    let lastCheck = process.hrtime();
-
-    setInterval(() => {
-      const elapsed = process.hrtime(lastCheck);
-      const lag = (elapsed[0] * 1e9 + elapsed[1]) / 1e6 - 500;
-      this.gauge('system_event_loop_lag', lag);
-      lastCheck = process.hrtime();
-    }, 500);
-  }
-
-  private startHandleMetrics(): void {
-    setInterval(() => {
-      let handles = 0;
-      try {
-        handles = process._getActiveHandles()?.length ?? 0;
-      } catch {
-        // Ignore errors accessing internal API
-      }
-      this.gauge('system_active_handles', handles);
-    }, 1000);
-  }
-
-  public increment(metric: string, tags?: Record<string, string>): void {
-    this.record({
-      name: metric,
+  public increment(name: string, tags?: Record<string, string>): void {
+    this.recordMetric({
+      name,
       value: 1,
+      type: 'counter',
       timestamp: Date.now(),
       tags
     });
   }
 
-  public gauge(metric: string, value: number, tags?: Record<string, string>): void {
-    this.record({
-      name: metric,
+  public histogram(name: string, value: number, tags?: Record<string, string>): void {
+    this.recordMetric({
+      name,
       value,
+      type: 'histogram',
       timestamp: Date.now(),
       tags
     });
   }
 
-  public histogram(metric: string, value: number, tags?: Record<string, string>): void {
-    this.record({
-      name: metric,
-      value,
-      timestamp: Date.now(),
-      tags
-    });
-  }
-
-  private record(metric: MetricValue): void {
-    if (!this.metrics.has(metric.name)) {
-      this.metrics.set(metric.name, []);
-    }
-    this.metrics.get(metric.name)?.push(metric);
-
-    if (this.metrics.get(metric.name)?.length === this.options.batchSize) {
-      this.flush().catch(error => {
-        logger.error({
-          message: 'Failed to flush metrics on batch size limit',
-          context: { error }
-        });
-      });
-    }
+  private recordMetric(metric: MetricValue): void {
+    const metrics = this.metrics.get(metric.name) ?? [];
+    metrics.push(metric);
+    this.metrics.set(metric.name, metrics);
   }
 
   public async flush(): Promise<void> {
@@ -226,97 +255,31 @@ export class MonitoringService {
         await this.provider.sendMetrics(allMetrics);
       });
       this.metrics.clear();
-    } catch (error) {
-      if (error instanceof NotionAssistantError) {
-        throw error;
+      this.lastFlushTime = Date.now();
+      this.consecutiveFailures = 0;
+    } catch (err) {
+      this.consecutiveFailures++;
+      if (err instanceof NotionAssistantError) {
+        throw err;
       }
       throw new NotionAssistantError(
         'Failed to flush metrics',
         ErrorCode.SERVICE_UNAVAILABLE,
         ErrorSeverity.ERROR,
         true,
-        { error }
+        { errorMessage: err instanceof Error ? err.message : String(err) }
       );
     }
   }
 
   public destroy(): void {
     clearInterval(this.flushInterval);
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
     this.circuitBreaker.destroy();
-    if (this.provider.destroy) {
+    if ('destroy' in this.provider && typeof this.provider.destroy === 'function') {
       this.provider.destroy();
     }
-  }
-
-  private collectSystemMetrics(): void {
-    // CPU Usage
-    const cpuUsage = process.cpuUsage();
-    this.gauge('system_cpu_usage', cpuUsage.user + cpuUsage.system);
-
-    // Memory Usage
-    const memoryUsage = process.memoryUsage();
-    this.gauge('system_memory_usage', memoryUsage.heapUsed);
-    this.gauge('system_memory_total', memoryUsage.heapTotal);
-
-    // Event Loop Lag
-    const startTime = process.hrtime();
-    setImmediate(() => {
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const lag = (seconds * 1e9 + nanoseconds) / 1e6; // Convert to milliseconds
-      this.gauge('system_event_loop_lag', lag);
-    });
-
-    // Active Handles (connections, timers, etc)
-    const activeHandles = process._getActiveHandles?.() ?? [];
-    this.gauge('system_active_handles', activeHandles.length);
-
-    // Active Requests
-    const activeRequests = process._getActiveRequests?.() ?? [];
-    this.gauge('system_active_requests', activeRequests.length);
-  }
-
-  /**
-   * Records a metric value
-   */
-  public recordMetric(name: string, value: number, tags?: Record<string, string>): void {
-    try {
-      if (!this.provider) {
-        this.logger.warn('No metric provider configured');
-        return;
-      }
-
-      this.provider.sendMetrics([{
-        name,
-        value,
-        timestamp: Date.now(),
-        tags
-      }]);
-    } catch (error) {
-      this.logger.error('Failed to record metric', error as Error, {
-        name,
-        value
-      });
-    }
-  }
-
-  /**
-   * Increments a counter metric by 1
-   */
-  public incrementCounter(name: string, tags?: Record<string, string>): void {
-    this.recordMetric(name, 1, tags);
-  }
-
-  /**
-   * Records a gauge metric
-   */
-  public recordGauge(name: string, value: number, tags?: Record<string, string>): void {
-    this.recordMetric(name, value, tags);
-  }
-
-  /**
-   * Records a histogram metric
-   */
-  public recordHistogram(name: string, value: number, tags?: Record<string, string>): void {
-    this.recordMetric(name, value, tags);
   }
 } 
