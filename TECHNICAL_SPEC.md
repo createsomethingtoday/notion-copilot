@@ -23,9 +23,16 @@
   - Security events (rate limit violations)
   - Circuit breaker states
   - Dead letter queue metrics
+  - Alert rule evaluations
+  - Audit event tracking
 - **Metrics Storage**: Prometheus-compatible time series
 - **Visualization**: Grafana dashboards
-- **Alerting**: Webhook-based alerts (coming soon)
+- **Alerting**: 
+  - Webhook-based alerts
+  - Configurable alert rules
+  - Alert batching and deduplication
+  - Rate limiting and circuit breakers
+  - Alert correlation with audit events
 
 #### Security
 - **Authentication**:
@@ -365,5 +372,103 @@ await auditService.createEvent(
 - External logging systems
 - Compliance reporting
 - Audit dashboards
+
+## Alert System
+
+### Overview
+The alert system provides configurable alerting capabilities with support for multiple delivery channels, alert rules, and correlation with audit events.
+
+### Components
+
+1. Core Types
+```typescript
+interface AlertRule {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  eventTypes: AuditEventType[];
+  severities: AuditEventSeverity[];
+  conditions: AlertCondition[];
+  channels: AlertChannel[];
+  rateLimitMs: number;
+  cooldownMs: number;
+  metadata: Record<string, unknown>;
+}
+
+interface AlertCondition {
+  field: string;
+  operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq' | 'contains' | 'matches';
+  value: unknown;
+}
+
+enum AlertChannel {
+  WEBHOOK = 'webhook',
+  EMAIL = 'email',
+  SLACK = 'slack'
+}
+
+enum AlertStatus {
+  PENDING = 'pending',
+  DELIVERED = 'delivered',
+  FAILED = 'failed'
+}
+```
+
+2. Storage Layer
+- PostgreSQL-based storage
+- Alert rules table
+- Alert history table
+- Optimized indexes
+- Transaction support
+
+3. Service Layer
+- Rule evaluation
+- Alert batching
+- Rate limiting
+- Circuit breakers
+- Delivery retries
+- Alert correlation
+
+### Features
+
+1. Alert Rules
+- Event type filtering
+- Severity filtering
+- Custom conditions
+- Multiple channels
+- Rate limiting
+- Cooldown periods
+
+2. Alert Channels
+- Webhook delivery
+- Email notifications (planned)
+- Slack integration (planned)
+- Custom channel support
+
+3. Performance Features
+- Alert batching
+- Rate limiting
+- Circuit breakers
+- Delivery retries
+- Alert correlation
+
+4. Integration Points
+- Audit logging system
+- Monitoring system
+- Recovery mechanisms
+- Error handling
+
+### Monitoring Metrics
+
+#### Alert Metrics
+- `alert_rule_evaluations`: Number of rule evaluations
+- `alert_rule_matches`: Number of condition matches
+- `alert_delivery_attempts`: Delivery attempt count
+- `alert_delivery_success`: Successful deliveries
+- `alert_delivery_failure`: Failed deliveries
+- `alert_delivery_latency`: Delivery time histogram
+- `alert_rate_limited`: Rate limited alerts count
+- `alert_circuit_breaker_trips`: Circuit breaker trips
 
 Last Updated: 2024-01-16 

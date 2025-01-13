@@ -1,44 +1,34 @@
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-export interface LogContext {
+export interface LogMetadata {
   [key: string]: unknown;
 }
 
-export class Logger {
-  private readonly namespace: string;
+export interface Logger {
+  debug(message: string, metadata?: LogMetadata): void;
+  info(message: string, metadata?: LogMetadata): void;
+  warn(message: string, metadata?: LogMetadata): void;
+  error(message: string, metadata?: LogMetadata): void;
+}
 
-  constructor(namespace: string) {
-    this.namespace = namespace;
+export class ConsoleLogger implements Logger {
+  private readonly name: string;
+
+  constructor(name: string) {
+    this.name = name;
   }
 
-  debug(message: string, context: LogContext = {}): void {
-    this.log('debug', message, context);
+  debug(message: string, metadata?: LogMetadata): void {
+    console.debug(`[${this.name}] ${message}`, metadata || '');
   }
 
-  info(message: string, context: LogContext = {}): void {
-    this.log('info', message, context);
+  info(message: string, metadata?: LogMetadata): void {
+    console.info(`[${this.name}] ${message}`, metadata || '');
   }
 
-  warn(message: string, context: LogContext = {}): void {
-    this.log('warn', message, context);
+  warn(message: string, metadata?: LogMetadata): void {
+    console.warn(`[${this.name}] ${message}`, metadata || '');
   }
 
-  error(message: string, error?: Error, context: LogContext = {}): void {
-    this.log('error', message, {
-      ...context,
-      error: error?.message,
-      stack: error?.stack
-    });
-  }
-
-  private log(level: LogLevel, message: string, context: LogContext): void {
-    const timestamp = new Date().toISOString();
-    console.log(JSON.stringify({
-      timestamp,
-      level,
-      namespace: this.namespace,
-      message,
-      ...context
-    }));
+  error(message: string, metadata?: LogMetadata): void {
+    console.error(`[${this.name}] ${message}`, metadata || '');
   }
 } 

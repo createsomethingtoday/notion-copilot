@@ -2,47 +2,46 @@ import { ErrorCode } from './types';
 
 export interface ErrorRecoveryStrategy {
   retryable: boolean;
+  maxRetries?: number;
+  backoffMs?: number;
   requiresUserInput?: boolean;
-  alternativeAction?: string;
   cleanup?: () => Promise<void>;
 }
 
-export const errorRecoveryStrategies: Record<ErrorCode, ErrorRecoveryStrategy> = {
-  [ErrorCode.UNAUTHORIZED]: {
+export const ERROR_RECOVERY_STRATEGIES: Record<ErrorCode, ErrorRecoveryStrategy> = {
+  [ErrorCode.INTERNAL_ERROR]: {
     retryable: true,
-    requiresUserInput: true,
-    alternativeAction: 'Please check your API credentials and try again.'
+    maxRetries: 3,
+    backoffMs: 1000
   },
-  [ErrorCode.INVALID_INPUT]: {
+  [ErrorCode.INVALID_CONFIGURATION]: {
     retryable: false,
-    requiresUserInput: true,
-    alternativeAction: 'Please check your input and try again.'
+    requiresUserInput: true
+  },
+  [ErrorCode.DELIVERY_FAILED]: {
+    retryable: true,
+    maxRetries: 5,
+    backoffMs: 2000
+  },
+  [ErrorCode.RATE_LIMITED]: {
+    retryable: true,
+    maxRetries: 3,
+    backoffMs: 5000
   },
   [ErrorCode.NOT_FOUND]: {
     retryable: false,
-    requiresUserInput: true,
-    alternativeAction: 'Please verify the resource exists and try again.'
-  },
-  [ErrorCode.RATE_LIMIT_EXCEEDED]: {
-    retryable: true,
-    alternativeAction: 'Please wait before retrying.'
-  },
-  [ErrorCode.SERVICE_UNAVAILABLE]: {
-    retryable: true,
-    alternativeAction: 'The service is temporarily unavailable. Please try again later.'
-  },
-  [ErrorCode.INTERNAL_ERROR]: {
-    retryable: false,
-    requiresUserInput: false,
-    alternativeAction: 'Please contact support if the issue persists.'
-  },
-  [ErrorCode.NETWORK_ERROR]: {
-    retryable: true,
-    alternativeAction: 'Please check your network connection and try again.'
+    requiresUserInput: true
   },
   [ErrorCode.VALIDATION_ERROR]: {
     retryable: false,
-    requiresUserInput: true,
-    alternativeAction: 'Please check your input format and try again.'
+    requiresUserInput: true
+  },
+  [ErrorCode.UNAUTHORIZED]: {
+    retryable: false,
+    requiresUserInput: true
+  },
+  [ErrorCode.FORBIDDEN]: {
+    retryable: false,
+    requiresUserInput: true
   }
 }; 
